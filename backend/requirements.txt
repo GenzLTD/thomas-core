@@ -1,5 +1,6 @@
 flask>=3.0.0
 flask-cors>=4.0.0
+flask-limiter>=3.5.0
 gunicorn>=21.2.0
 
 # Document ingestion
@@ -8,6 +9,10 @@ markitdown>=0.0.1
 # Auth
 PyJWT>=2.8.0
 bcrypt>=4.1.0
+google-auth>=2.28.0
+
+# Payment (overseas)
+stripe>=8.0.0
 
 # HTTP
 requests>=2.31.0
