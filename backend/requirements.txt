@@ -3,8 +3,8 @@ flask-cors>=4.0.0
 flask-limiter>=3.5.0
 gunicorn>=21.2.0
 
-# Document ingestion
-markitdown>=0.0.1
+# Document ingestion (pdf/docx extras required for MarkItDown converters)
+markitdown[pdf,docx]>=0.0.1
 
 # Auth
 PyJWT>=2.8.0
