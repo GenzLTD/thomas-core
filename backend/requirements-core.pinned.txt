@@ -1,0 +1,18 @@
+# thomas-core R3 定版（requirements-core.pinned.txt）
+# 定版时间：2026-11-07 · 基线 Python 3.12
+#   （2026-11-07 当晚从 3.10.12 升级：Python 3.10 已 EOL 停止安全更新；
+#     且 google-auth / requests / python-dotenv / pytest 四项 requires_python 恰为 >=3.10，
+#     宿主卡在最低门槛零余量，未来任何依赖要求 3.11+ 即全线卡死——CI 同理）
+# 验证记录：同一套钉版在 Python 3.12.13 与 3.13.14 上 smoke_core.py 均 9/9 PASS，零代码改动
+# 方法：PyPI JSON API 实测解析——满足 backend/requirements-core.txt 的范围约束、
+#       且 requires_python 兼容基线的，最新稳定版（预发布除外）
+flask==3.1.3            # >=3.0.0    requires_python>=3.9
+flask-cors==6.0.5       # >=4.0.0    requires_python>=3.9,<4.0
+PyJWT==2.15.1           # >=2.8.0    requires_python>=3.9
+bcrypt==5.0.0           # >=4.1.0    requires_python>=3.8
+google-auth==2.62.1     # >=2.28.0   requires_python>=3.10
+cryptography==50.0.2    # >=42.0.0   requires_python>=3.9
+requests==2.34.2        # >=2.31.0   requires_python>=3.10
+python-dotenv==1.2.4    # >=1.0.0    requires_python>=3.10
+opencc-python-reimplemented==0.1.7  # >=0.1.7  any
+pytest==9.2.0           # >=7.4.0    requires_python>=3.10
