@@ -1,12 +1,15 @@
-"""THOMAS core standalone app（刀 4）。
+"""THOMAS core standalone app（刀 4；刀 5 起完全自足）。
 
 create_core_app() 只装配核面：auth / ask / compliance 三蓝图 + /health，
-与宿主 create_app()（:5200，27 蓝图）并存；同 Config、同 DB（同库不拆文件）。
-R1：本 app 的写权只落在 core_schema 7 表。
+与宿主 create_app()（:5200，27 蓝图）并存；同库不同写权面。
+R1：本 app 的写权只落在 core_schema 7 表（经 `CoreDB`，刀 5c）。
+
+自足性（刀 5）：核不 import 任何宿主模块。ask 热路径上的三处产品依赖改走注入点 ——
+`hooks.record_interaction_log`（时间线埋点）/ `hooks.report_manager`（匹配报告）/
+`brain.get_brain()`（意图解析与派发，RFC 裁决 1）。宿主 `create_app()` 会注册实现；
+宿主不在时按缺省语义降级（埋点 no-op、报告 None、brain 抛 BrainNotConfigured）。
 
 health 判据（四机验收卡）：service="thomas-core" 且 deploy_track="looma"。
-ask 热路径仍经 src.agents.central_brain（RFC 裁决 1 例外条款的暂行默认实现，
-Phase 1 换 brain_bridge 宿主注入；本文件不改 ask_routes——行为不变纪律）。
 """
 from __future__ import annotations
 
@@ -15,16 +18,15 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-from src.config import Config
+from src.thomas_core.config import CoreConfig
+from src.thomas_core.runtime import git_commit
 
 
 def create_core_app(env: str = "development") -> Flask:
     """Build the core-only Flask app (:5300). Host app (:5200) untouched."""
-    from src.app import _git_commit, _refresh_config
-
     app = Flask("thomas-core")
-    _refresh_config()  # re-read env vars so per-test overrides are picked up
-    app.config.from_object(Config)
+    CoreConfig.refresh()  # re-read env vars so per-test overrides are picked up
+    app.config.from_object(CoreConfig)
 
     CORS(app, origins=app.config["CORS_ORIGINS"], supports_credentials=True)
 
@@ -37,21 +39,18 @@ def create_core_app(env: str = "development") -> Flask:
     app.register_blueprint(ask_bp, url_prefix="/v1")
     app.register_blueprint(compliance_bp, url_prefix="/v1/compliance")
 
-    # --- Initialize database on first request (split 模式：core 只建 core schema) ---
-    from src.db import schema_loader
-    from src.db.manager import DatabaseManager
+    # --- Initialize database on first request (核只碰 core 面：刀 5c 起用 CoreDB) ---
+    from src.thomas_core.db.core_db import CoreDB
 
     @app.before_request
     def init_db():
         if not getattr(app, "_db_initialized", False):
             db_path = app.config["DATABASE_PATH"]
-            split = schema_loader.split_enabled()
-            if split:
-                info = schema_loader.ensure_scope(db_path, "core")
-                app.logger.info("[core] schema scope=core ensured: %s", info)
-            db = DatabaseManager(db_path)
-            if not split:
-                db.init_schema()
+            db = CoreDB(db_path)
+            # split=1：只建 core scope；split=0（legacy 回退）：core + product 两份 DDL 都建，
+            # 等价于过去的全量建表（迁移块留在宿主 DatabaseManager.init_schema）。
+            info = db.init_core_schema()
+            app.logger.info("[core] schema ensured: %s", info)
             app._db = db
             app._db_initialized = True
 
@@ -79,7 +78,7 @@ def create_core_app(env: str = "development") -> Flask:
             status="ok" if llm_ready else "degraded",
             service="thomas-core",
             version="core-v1",
-            git_commit=_git_commit(),
+            git_commit=git_commit(),
             deploy_track="looma",
             llm_provider=primary_llm,
             llm_configured=llm_ready,
