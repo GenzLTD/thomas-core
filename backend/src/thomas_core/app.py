@@ -36,21 +36,18 @@ def create_core_app(env: str = "development") -> Flask:
     app.register_blueprint(ask_bp, url_prefix="/v1")
     app.register_blueprint(compliance_bp, url_prefix="/v1/compliance")
 
-    # --- Initialize database on first request (split 模式：core 只建 core schema) ---
-    from src.db import schema_loader
-    from src.db.manager import DatabaseManager
+    # --- Initialize database on first request (核只碰 core 面：刀 5c 起用 CoreDB) ---
+    from src.thomas_core.db.core_db import CoreDB
 
     @app.before_request
     def init_db():
         if not getattr(app, "_db_initialized", False):
             db_path = app.config["DATABASE_PATH"]
-            split = schema_loader.split_enabled()
-            if split:
-                info = schema_loader.ensure_scope(db_path, "core")
-                app.logger.info("[core] schema scope=core ensured: %s", info)
-            db = DatabaseManager(db_path)
-            if not split:
-                db.init_schema()
+            db = CoreDB(db_path)
+            # split=1：只建 core scope；split=0（legacy 回退）：core + product 两份 DDL 都建，
+            # 等价于过去的全量建表（迁移块留在宿主 DatabaseManager.init_schema）。
+            info = db.init_core_schema()
+            app.logger.info("[core] schema ensured: %s", info)
             app._db = db
             app._db_initialized = True
 
