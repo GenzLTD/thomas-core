@@ -227,8 +227,8 @@ def search_poetry_chroma(query: str, n_results: int = 5) -> list[dict]:
 
     try:
         # Normalize Simplified -> Traditional before embedding so query vector
-        # aligns with the Traditional corpus (see src/utils/textnorm.py).
-        from src.utils.textnorm import to_traditional
+        # aligns with the Traditional corpus (see src/thomas_core/utils/textnorm.py).
+        from src.thomas_core.utils.textnorm import to_traditional
 
         normalized = to_traditional(query)
         coll = client.get_collection("poetry_full")

@@ -23,7 +23,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime
 
-from src.db import schema_loader
+from src.thomas_core.db import schema_loader
 
 logger = logging.getLogger(__name__)
 
