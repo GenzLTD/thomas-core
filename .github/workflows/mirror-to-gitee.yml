@@ -1,0 +1,54 @@
+name: Mirror to Gitee (opt-in)
+
+# 背景：现有 zervi-genz/gitee-sync-bot 的 sync.yml 是**单向 Gitee → GitHub**，
+# GH_OWNER=zervi-genz 个人号，自动发现的是 Gitee 侧仓库，并用 --prune --force 推镜像。
+# 本仓是 GenzLTD 组织仓，不在 Gitee、也不在 zervi-genz 个人号下；若强行纳入该 bot，
+# 会被 Gitee 同名仓内容覆盖。因此备份链路改由本仓侧做 opt-in 反向镜像。
+#
+# 生效条件（账号侧配置，任缺一项则本 workflow 恒为 no-op，不改任何远端）：
+#   secrets.GITEE_TOKEN_WRITE  Gitee 可写 token（bot 现有的 GITEE_TOKEN 是 projects:read 只读，不能用于推送）
+#   vars.GITEE_MIRROR_REPO     形如 zervi-genz/thomas-core，须先在 Gitee 侧建好目标仓
+#
+# 注意：镜像使用 --prune --force，目标仓会被本仓 main + tags 覆盖；请勿在 Gitee 侧直接提交。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check mirror config
+        id: cfg
+        env:
+          TOKEN: ${{ secrets.GITEE_TOKEN_WRITE }}
+          TARGET: ${{ vars.GITEE_MIRROR_REPO }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$TARGET" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Gitee 镜像未配置（缺 GITEE_TOKEN_WRITE / GITEE_MIRROR_REPO），本次 no-op"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mirror main + tags to Gitee
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          TOKEN: ${{ secrets.GITEE_TOKEN_WRITE }}
+          TARGET: ${{ vars.GITEE_MIRROR_REPO }}
+          SRC: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone --mirror --quiet \
+            "https://x-access-token:${GH_TOKEN}@github.com/${SRC}.git" /tmp/mirror.git
+          cd /tmp/mirror.git
+          # Gitee git token 认证用户名固定为 oauth2
+          git push --prune --force --quiet \
+            "https://oauth2:${TOKEN}@gitee.com/${TARGET}.git" \
+            "refs/heads/*:refs/heads/*" "refs/tags/*:refs/tags/*"
+          echo "mirrored ${SRC} -> ${TARGET}"

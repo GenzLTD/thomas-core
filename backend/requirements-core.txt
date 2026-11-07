@@ -1,0 +1,29 @@
+# thomas-core 实际依赖（由来源仓 requirements.txt 按真实 import 精简而来）
+# 说明：stripe / markitdown / gunicorn / fastmcp 等属产品面，核不使用；
+#       chromadb / onnxruntime 只在 RAG 命中时惰性加载，列为可选。
+
+# Web
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Auth / 密码学
+PyJWT>=2.8.0
+bcrypt>=4.1.0
+google-auth>=2.28.0
+cryptography>=42.0.0
+
+# HTTP
+requests>=2.31.0
+
+# Config
+python-dotenv>=1.0.0
+
+# 文本归一（简繁）
+opencc-python-reimplemented>=0.1.7
+
+# Testing
+pytest>=7.4.0
+
+# --- 可选：RAG 命中时才需要 ---
+# chromadb>=0.5.0
+# onnxruntime>=1.17.0
