@@ -6,8 +6,12 @@ name: Mirror to Gitee (opt-in)
 # 会被 Gitee 同名仓内容覆盖。因此备份链路改由本仓侧做 opt-in 反向镜像。
 #
 # 生效条件（账号侧配置，任缺一项则本 workflow 恒为 no-op，不改任何远端）：
-#   secrets.GITEE_TOKEN_WRITE  Gitee 可写 token（bot 现有的 GITEE_TOKEN 是 projects:read 只读，不能用于推送）
 #   vars.GITEE_MIRROR_REPO     形如 zervi-genz/thomas-core，须先在 Gitee 侧建好目标仓
+#   secrets.GITEE_TOKEN_WRITE  Gitee 可写 token（bot 现有的 GITEE_TOKEN 是 projects:read 只读，不能用于推送）
+#
+# 两级开关：job 级 if 检查 vars（未配置 → 整 job skipped，不申请 runner、不产生失败 run）；
+# step 级再检查 secret（防 vars 已配但 token 未配）。两者齐全才真正镜像。
+# 注：账号侧 Actions 计费/支出限额异常时 job 也会起不来，属账号侧问题，非本文件语法。
 #
 # 注意：镜像使用 --prune --force，目标仓会被本仓 main + tags 覆盖；请勿在 Gitee 侧直接提交。
 
@@ -21,6 +25,8 @@ permissions:
 
 jobs:
   mirror:
+    # opt-in 未配置时整 job 跳过，不申请 runner（避免账号侧计费异常时留下失败 run）
+    if: vars.GITEE_MIRROR_REPO != ''
     runs-on: ubuntu-latest
     steps:
       - name: Check mirror config
