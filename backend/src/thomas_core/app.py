@@ -15,15 +15,15 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-from src.config import Config, _refresh_config
+from src.thomas_core.config import CoreConfig
 from src.thomas_core.runtime import git_commit
 
 
 def create_core_app(env: str = "development") -> Flask:
     """Build the core-only Flask app (:5300). Host app (:5200) untouched."""
     app = Flask("thomas-core")
-    _refresh_config()  # re-read env vars so per-test overrides are picked up
-    app.config.from_object(Config)
+    CoreConfig.refresh()  # re-read env vars so per-test overrides are picked up
+    app.config.from_object(CoreConfig)
 
     CORS(app, origins=app.config["CORS_ORIGINS"], supports_credentials=True)
 
