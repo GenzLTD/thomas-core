@@ -21,7 +21,7 @@ from src.thomas_core.quota import (
     consume_with_boost, refund_consumption, get_remaining, build_upgrade_hint,
     QUOTA_LIMITS, RESOURCE_ASK,
 )
-from src.timeline.events import record_interaction_log
+from src.thomas_core import hooks
 
 logger = logging.getLogger("looma.ask")
 
@@ -70,9 +70,9 @@ def _load_report_context(user_id: str, report_id: str = "", use_latest: bool = T
         return None
 
     try:
-        from src.reports.match_report_manager import MatchReportManager
-
-        mgr = MatchReportManager(current_app._db)
+        mgr = hooks.report_manager(current_app._db)
+        if mgr is None:
+            return None
         report = None
         rid = (report_id or "").strip()
         if rid:
@@ -164,7 +164,7 @@ def ask_question():
         # Still record timeline evidence (cache hits are real user interactions)
         if user_id and user_id != "guest-anon":
             try:
-                record_interaction_log(
+                hooks.record_interaction_log(
                     current_app._db,
                     user_id,
                     query=query,
@@ -200,7 +200,9 @@ def ask_question():
 
     try:
         # Intent parsing
-        from src.agents.central_brain import parse_intent, dispatch
+        from src.thomas_core.brain import get_brain
+
+        parse_intent, dispatch = get_brain()
         t_intent = time.time()
         intent_str, confidence, slots = parse_intent(query, navigator_mode=navigator_mode)
         _timing["intent"] = int((time.time() - t_intent) * 1000)
@@ -270,7 +272,7 @@ def ask_question():
         )
         # Timeline: AI interaction (best-effort, non-blocking)
         if user_id and user_id != "guest-anon":
-            record_interaction_log(
+            hooks.record_interaction_log(
                 db,
                 user_id,
                 query=query,

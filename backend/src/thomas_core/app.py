@@ -1,12 +1,15 @@
-"""THOMAS core standalone app（刀 4）。
+"""THOMAS core standalone app（刀 4；刀 5 起完全自足）。
 
 create_core_app() 只装配核面：auth / ask / compliance 三蓝图 + /health，
-与宿主 create_app()（:5200，27 蓝图）并存；同 Config、同 DB（同库不拆文件）。
-R1：本 app 的写权只落在 core_schema 7 表。
+与宿主 create_app()（:5200，27 蓝图）并存；同库不同写权面。
+R1：本 app 的写权只落在 core_schema 7 表（经 `CoreDB`，刀 5c）。
+
+自足性（刀 5）：核不 import 任何宿主模块。ask 热路径上的三处产品依赖改走注入点 ——
+`hooks.record_interaction_log`（时间线埋点）/ `hooks.report_manager`（匹配报告）/
+`brain.get_brain()`（意图解析与派发，RFC 裁决 1）。宿主 `create_app()` 会注册实现；
+宿主不在时按缺省语义降级（埋点 no-op、报告 None、brain 抛 BrainNotConfigured）。
 
 health 判据（四机验收卡）：service="thomas-core" 且 deploy_track="looma"。
-ask 热路径仍经 src.agents.central_brain（RFC 裁决 1 例外条款的暂行默认实现，
-Phase 1 换 brain_bridge 宿主注入；本文件不改 ask_routes——行为不变纪律）。
 """
 from __future__ import annotations
 
