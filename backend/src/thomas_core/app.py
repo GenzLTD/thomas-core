@@ -37,16 +37,30 @@ def create_core_app(env: str = "development") -> Flask:
     app.register_blueprint(ask_bp, url_prefix="/v1")
     app.register_blueprint(compliance_bp, url_prefix="/v1/compliance")
 
-    # --- Initialize database on first request (same pattern as host app) ---
+    # --- Initialize database on first request (split 模式：core 只建 core schema) ---
+    from src.db import schema_loader
     from src.db.manager import DatabaseManager
 
     @app.before_request
     def init_db():
         if not getattr(app, "_db_initialized", False):
-            db = DatabaseManager(app.config["DATABASE_PATH"])
-            db.init_schema()
+            db_path = app.config["DATABASE_PATH"]
+            split = schema_loader.split_enabled()
+            if split:
+                info = schema_loader.ensure_scope(db_path, "core")
+                app.logger.info("[core] schema scope=core ensured: %s", info)
+            db = DatabaseManager(db_path)
+            if not split:
+                db.init_schema()
             app._db = db
             app._db_initialized = True
+
+    # --- R1 键位强制（Phase 1）：与 in-process 宿主共用同一份实现 ---
+    # 规则见 src/thomas_core/keys.py：带错 → 403 user_id_mismatch；只带键位不带 token → 401；
+    # 不带键位 → 放行（存量调用不受影响）。
+    from src.thomas_core.keys import register_user_id_key_guard
+
+    register_user_id_key_guard(app)
 
     # --- Health ---
     @app.route("/health", methods=["GET"])
