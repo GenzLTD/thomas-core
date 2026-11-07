@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import os
 
-# 与 `src.config` 同一行为：导入即加载 .env（不覆盖已存在的 env）。
+# 与联调仓 `src.config` 同一行为：导入即加载 .env，并覆盖已存在的 env。
 # 独立核仓里 dotenv 若未安装，退化为只读进程环境 —— 不因缺这个可选依赖起不来。
 try:  # pragma: no cover - 环境相关
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(override=True)
 except Exception:  # pragma: no cover
     pass
 

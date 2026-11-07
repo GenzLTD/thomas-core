@@ -10,7 +10,6 @@ Usage (shared by auth_routes.py):
     from src.thomas_core.auth.huawei_auth import exchange_authorization_code, HuaweiUserInfo
 """
 
-import time
 import json
 import requests
 from dataclasses import dataclass, field
@@ -110,18 +109,21 @@ def exchange_authorization_code(authorization_code: str) -> dict:
 def fetch_user_info(access_token: str) -> HuaweiUserInfo:
     """使用 access_token 获取华为帐号用户信息（openID / unionID）。
 
+    HarmonyOS NEXT Account Kit 使用 GOpen.User.getInfo 接口；
+    旧的 openplatform.account.getOpenPlatformUserInfo 已下线
+    （返回 "service is not found"）。
+    文档: https://developer.huawei.com/consumer/cn/doc/harmonyos-references/account-api-get-user-info-get-nickname-and-avatar
+
     Raises ValueError on failure.
     """
-    params = {
-        "nsp_ts": str(int(time.time() * 1000)),
-        "access_token": access_token,
-        "nsp_fmt": "JSON",
-        "nsp_svc": "openplatform.account.getOpenPlatformUserInfo",
-    }
-
-    resp = requests.get(
+    resp = requests.post(
         _userinfo_url(),
-        params=params,
+        params={"nsp_svc": "GOpen.User.getInfo"},
+        data={
+            "access_token": access_token,
+            "getNickName": "1",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=10,
     )
 
@@ -132,7 +134,12 @@ def fetch_user_info(access_token: str) -> HuaweiUserInfo:
 
     data = resp.json()
 
-    # 华为返回结构中，用户信息可能在 userInfo 或 response 字段
+    # 失败时华为返回 HTTP 200，错误码放在 NSP_STATUS 响应头
+    nsp_status = resp.headers.get("NSP_STATUS")
+    if nsp_status is not None and str(nsp_status) != "0":
+        raise ValueError(f"Huawei userinfo failed: {data}")
+
+    # 新接口响应结构: displayName / openID / unionID / headPictureURL
     user_info = data.get("userInfo") or data.get("response") or data
 
     open_id = user_info.get("openID", "")
