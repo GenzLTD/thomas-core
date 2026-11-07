@@ -1,0 +1,66 @@
+# thomas-core → 腾讯云新机 106.52.73.17 自动部署（GitHub Actions）
+#
+# 安全口径（FN-2026-11-07-01 退役对账教训，逐条内建）：
+#   1) 钉 SSH 主机密钥指纹（DEPLOY106_HOST_FINGERPRINT），严禁 StrictHostKeyChecking=no
+#      —— 退役 IP 会被云商回收转售，不钉指纹 = 把部署产物和私钥送给下一任住户
+#   2) 专用部署密钥 DEPLOY106_SSH_KEY（交付包 ci-prep/ 生成，私钥只进 GitHub secret、永不入仓），
+#      不复用 github/tencent 共用钥 id_ed25519；泄露只废这一把，轮换成本最小
+#   3) 本工作流只指向新机；旧机（1.14.202.161 / 47.115.168.107 / 14.29.216.219）的
+#      部署工作流先 disable 再删（退役对账执行清单第 1 项）
+#   4) host 走 vars.DEPLOY106_HOST，工作流里不写死 IP——IP 变更改变量即可，
+#      且变量为空时 CI 直接失败，不会误投
+#
+# 前置（缺一不可）：
+#   - backend/requirements-core.pinned.txt 已提交进 thomas-core 仓（R3 定版）
+#   - 服务器侧 ~/thomas/bin/deploy-thomas-core.sh 已就位（首次可随本文件一起 scp）
+#   - GitHub 侧 secrets/variables 已建（见交付说明）
+
+name: deploy-106
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'scripts/**'
+      - '.github/workflows/deploy-106.yml'
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: '部署指定 commit（留空 = 最新 main）'
+        required: false
+
+concurrency:
+  group: deploy-106
+  cancel-in-progress: false   # 部署不并发，排队执行，避免 smoke/重启互相踩
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'   # 基线 3.12（2026-11-07 从 3.10 升级：3.10 已 EOL；钉版四包曾卡 >=3.10 零余量；3.12.13/3.13.14 实测 smoke 9/9）
+      - name: 安装钉版依赖
+        run: pip install -r backend/requirements-core.pinned.txt
+      - name: smoke 门禁（临时 SQLite / 不联网 / 零业务风险）
+        run: cd backend && python ../scripts/smoke_core.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production-106   # 可选：Settings→Environments 里配 required reviewers 当人工闸
+    steps:
+      - name: 触发服务器侧部署（服务器经只读 deploy key 拉码，CI 不传制品）
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.DEPLOY106_HOST }}
+          username: ${{ vars.DEPLOY106_USER || 'ubuntu' }}
+          key: ${{ secrets.DEPLOY106_SSH_KEY }}
+          fingerprint: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
+          command_timeout: 20m
+          script: |
+            set -e
+            SHA="${{ github.event.inputs.sha || github.sha }}"
+            ~/thomas/bin/deploy-thomas-core.sh "$SHA"

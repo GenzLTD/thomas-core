@@ -1,0 +1,30 @@
+[Unit]
+Description=thomas-core - THOMAS 认证/身份/合规/RAG 核服务
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/thomas/current/backend
+# 两个 env 文件：.env 存真实凭据（运维面维护，chmod 600，CI 不碰）；
+# deploy.env 由部署脚本每次写入 GIT_COMMIT（可追溯，对齐 /health 的 git_commit 口径）
+EnvironmentFile=/home/ubuntu/thomas/.env
+EnvironmentFile=/home/ubuntu/thomas/deploy.env
+Environment=THOMAS_SCHEMA_SPLIT=1
+Environment=FLASK_PORT=5300
+Environment=DATABASE_PATH=/home/ubuntu/thomas/data/core.db
+ExecStart=/home/ubuntu/thomas/.venv/bin/python run_core.py
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/home/ubuntu/thomas/logs/thomas-core.log
+StandardError=append:/home/ubuntu/thomas/logs/thomas-core.log
+
+# 基础加固： app 只写 ~/thomas，不需要新特权
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/home/ubuntu/thomas
+
+[Install]
+WantedBy=multi-user.target
