@@ -15,13 +15,12 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-from src.config import Config
+from src.config import Config, _refresh_config
+from src.thomas_core.runtime import git_commit
 
 
 def create_core_app(env: str = "development") -> Flask:
     """Build the core-only Flask app (:5300). Host app (:5200) untouched."""
-    from src.app import _git_commit, _refresh_config
-
     app = Flask("thomas-core")
     _refresh_config()  # re-read env vars so per-test overrides are picked up
     app.config.from_object(Config)
@@ -79,7 +78,7 @@ def create_core_app(env: str = "development") -> Flask:
             status="ok" if llm_ready else "degraded",
             service="thomas-core",
             version="core-v1",
-            git_commit=_git_commit(),
+            git_commit=git_commit(),
             deploy_track="looma",
             llm_provider=primary_llm,
             llm_configured=llm_ready,
