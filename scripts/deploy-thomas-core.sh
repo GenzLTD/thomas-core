@@ -33,14 +33,22 @@ say() { echo -e "\n[deploy $(date '+%F %T')] $*"; }
 mkdir -p "$RELEASES" "$APP/data" "$APP/logs" "$APP/bin"
 
 # --- 1. 代码：只读 deploy key 拉取（服务器唯一 GitHub 凭据）---
+export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/deploy_thomas_core -o IdentitiesOnly=yes"
 if [ ! -d "$SRC/.git" ]; then
   say "首次引导：clone thomas-core"
-  GIT_SSH_COMMAND="ssh -i $HOME/.ssh/deploy_thomas_core -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+  GIT_SSH_COMMAND="$GIT_SSH_COMMAND -o StrictHostKeyChecking=accept-new" \
     git clone -q git@github.com:GenzLTD/thomas-core.git "$SRC"
 fi
 say "fetch $SHA"
-GIT_SSH_COMMAND="ssh -i $HOME/.ssh/deploy_thomas_core -o IdentitiesOnly=yes" \
-  git -C "$SRC" fetch -q origin "$SHA"
+# GitHub 只认完整 40 位 SHA 或分支名：缩写 SHA 先回退 fetch main，再本地 rev-parse 解析
+git -C "$SRC" fetch -q origin "$SHA" 2>/dev/null || git -C "$SRC" fetch -q origin main
+FULL="$(git -C "$SRC" rev-parse --verify -q "${SHA}^{commit}")" || FULL=""
+if [ -z "$FULL" ]; then
+  echo "FATAL: 无法解析 $SHA —— 缩写解析失败或该提交不在 main 上（dispatch 传旧 SHA 前先确认存在）"
+  exit 1
+fi
+say "resolved: $SHA -> $FULL"
+SHA="$FULL"
 
 REL="$RELEASES/$SHA"
 rm -rf "$REL"; mkdir -p "$REL"
