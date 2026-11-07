@@ -3,6 +3,13 @@
 # 安全口径（FN-2026-11-07-01 退役对账教训，逐条内建）：
 #   1) 钉 SSH 主机密钥指纹（DEPLOY106_HOST_FINGERPRINT），严禁 StrictHostKeyChecking=no
 #      —— 退役 IP 会被云商回收转售，不钉指纹 = 把部署产物和私钥送给下一任住户
+#      ⚠️ 指纹类型必须是「客户端实际协商到的那把主机密钥」，不是"最强"的那把：
+#      appleboy/ssh-action@v1.2.0 → drone-ssh 1.8.0 → easyssh-proxy v1.5.0 → x/crypto/ssh v0.29.0，
+#      Go 客户端 supportedHostKeyAlgos 中 KeyAlgoECDSA256 排在 KeyAlgoED25519 之前
+#      （截至 x/crypto v0.57.0 仍如此），且 easyssh/drone-ssh 均不暴露 HostKeyAlgorithms，
+#      故协商结果恒为 ecdsa-sha2-nistp256。secret 必须填 ECDSA P-256 指纹，
+#        ssh-keyscan -t ecdsa <host> | ssh-keygen -lf -   # 取第二列（SHA256: 开头）
+#      填 ed25519 指纹会 handshake failed: host key fingerprint mismatch（2026-11-07 实测踩坑）
 #   2) 专用部署密钥 DEPLOY106_SSH_KEY（交付包 ci-prep/ 生成，私钥只进 GitHub secret、永不入仓），
 #      不复用 github/tencent 共用钥 id_ed25519；泄露只废这一把，轮换成本最小
 #   3) 本工作流只指向新机；旧机（1.14.202.161 / 47.115.168.107 / 14.29.216.219）的
