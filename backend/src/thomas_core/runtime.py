@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-from functools import lru_cache
 from pathlib import Path
 
 
@@ -35,16 +34,39 @@ def _backend_dir() -> str:
     return str(here.parent)
 
 
-@lru_cache(maxsize=1)
+_cached_value: str | None = None
+_cached_env: str | None = None
+
+
 def git_commit() -> str:
     """Resolve the deployed commit hash for /health (三级回退).
 
     Priority: GIT_COMMIT env → backend/git_commit.txt → git rev-parse.
     Cloud deploys rsync with --exclude='.git' (no git history), so deploy
     scripts write backend/git_commit.txt at rsync time; local runs fall back
-    to rev-parse. Cached for the process lifetime.
+    to rev-parse.
+
+    缓存口径：**按 env 值记忆**（不是无条件 lru_cache）—— 进程内 `GIT_COMMIT`
+    不变时只算一次；测试用 monkeypatch 改了 `GIT_COMMIT` 能立刻生效（原实现
+    无条件缓存，被两面缓存叠加后返回旧值，`test_dual_track_health_ids` 抓出）。
     """
+    global _cached_value, _cached_env
     env = os.getenv("GIT_COMMIT", "").strip()
+    if _cached_value is not None and _cached_env == env:
+        return _cached_value
+    value = _resolve_commit(env)
+    _cached_value, _cached_env = value, env
+    return value
+
+
+def reset_cache() -> None:
+    """清缓存（测试用）。"""
+    global _cached_value, _cached_env
+    _cached_value = None
+    _cached_env = None
+
+
+def _resolve_commit(env: str) -> str:
     if env:
         return env
     backend_dir = _backend_dir()
