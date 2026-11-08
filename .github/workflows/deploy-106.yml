@@ -150,7 +150,7 @@ jobs:
   # 只听 127.0.0.1:5211，不改 nginx，不出境。钉子用刚部署的 SOURCE.json。
   kernel:
     needs: deploy
-    if: needs.deploy.result == 'success'
+    if: always() && needs.deploy.result == 'success'
     runs-on: ubuntu-latest
     environment: production-106
     steps:
