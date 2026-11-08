@@ -5,6 +5,8 @@
 #   1) 本仓 main 上 backend / scripts / contracts / 本工作流有变更 → 测完部署新机
 #   2) gfcc 打 v* tag（或手动填 gfcc_ref）→ 先把该提交的契约钉进本仓 main，再部署新机
 #      天翼已退役。gfcc 的 Deploy 工作流只发 repository_dispatch，不登录旧机。
+#   核部署成功后另起 gfcc-kernel：只听 127.0.0.1:5211，不切公网，不出境。
+#   失败不回滚 thomas-core。凭据在服务器 ~/gfcc-kernel/.env，不进仓。
 #
 # 安全口径（FN-2026-11-07-01 退役对账教训，逐条内建）：
 #   1) 钉 SSH 主机密钥指纹（DEPLOY106_HOST_FINGERPRINT），严禁 StrictHostKeyChecking=no
@@ -143,3 +145,25 @@ jobs:
             set -e
             SHA="${{ needs.sync-gfcc.outputs.sha || github.event.inputs.sha || github.sha }}"
             ~/thomas/bin/deploy-thomas-core.sh "$SHA"
+
+  # 核部署成功之后才装 gfcc-kernel。失败不回滚 thomas-core。
+  # 只听 127.0.0.1:5211，不改 nginx，不出境。钉子用刚部署的 SOURCE.json。
+  kernel:
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    environment: production-106
+    steps:
+      - name: 本机回环安装 gfcc-kernel
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.DEPLOY106_HOST }}
+          username: ${{ vars.DEPLOY106_USER || 'ubuntu' }}
+          key: ${{ secrets.DEPLOY106_SSH_KEY }}
+          fingerprint: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            mkdir -p "$HOME/thomas/bin"
+            install -m 755 "$HOME/thomas/current/scripts/deploy-gfcc-kernel.sh" "$HOME/thomas/bin/deploy-gfcc-kernel.sh"
+            "$HOME/thomas/bin/deploy-gfcc-kernel.sh"
