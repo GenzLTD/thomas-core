@@ -96,11 +96,22 @@ if [ ! -f "$REL/services/gfcc_kernel/pyproject.toml" ]; then
 fi
 
 # --- 2. 已是这个钉子且健康：不重启 thomas，也不再装一遍 ---
-if [ "$(readlink -f "$APP/current" 2>/dev/null || true)" = "$(readlink -f "$REL")" ] \
-   && curl -sf -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | grep -q '"service": "gfcc_kernel"' \
-   && curl -sf -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | grep -q '"store": "sqlite"'; then
-  say "already running $SHA"
-  exit 0
+health_fields() {
+  curl -sf -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | python3 -c 'import json,sys
+try:
+    data=json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data={}
+print(data.get("service",""))
+print(data.get("store",""))'
+}
+if [ "$(readlink -f "$APP/current" 2>/dev/null || true)" = "$(readlink -f "$REL")" ]; then
+  running="$(health_fields || true)"
+  if [ "$(printf '%s\n' "$running" | sed -n '1p')" = "gfcc_kernel" ] \
+     && [ "$(printf '%s\n' "$running" | sed -n '2p')" = "sqlite" ]; then
+    say "already running $SHA"
+    exit 0
+  fi
 fi
 
 # --- 3. 端口必须是我们自己的，或者还没人听 ---
@@ -185,11 +196,21 @@ ln -sfn "$REL" "$APP/current"
 sudo systemctl restart gfcc-kernel
 
 ok=""
+service=""
+store=""
 for _ in $(seq 1 20); do
   sleep 1
   body="$(curl -sf -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null || true)"
-  if printf '%s' "$body" | grep -q '"service": "gfcc_kernel"' \
-     && printf '%s' "$body" | grep -q '"store": "sqlite"'; then
+  fields="$(printf '%s' "$body" | python3 -c 'import json,sys
+try:
+    data=json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data={}
+print(data.get("service",""))
+print(data.get("store",""))')"
+  service="$(printf '%s\n' "$fields" | sed -n '1p')"
+  store="$(printf '%s\n' "$fields" | sed -n '2p')"
+  if [ "$service" = "gfcc_kernel" ] && [ "$store" = "sqlite" ]; then
     ok=1
     break
   fi
@@ -219,6 +240,6 @@ if [ -n "$PREV" ] && [ -d "$APP/releases/$PREV" ]; then
 else
   sudo systemctl stop gfcc-kernel || true
 fi
-say "health FAIL"
+say "health FAIL service=${service:-empty} store=${store:-empty}"
 sudo journalctl -u gfcc-kernel -n 40 --no-pager || true
 exit 1
