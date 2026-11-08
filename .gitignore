@@ -8,6 +8,7 @@ venv/
 
 # Local runtime data (never commit a real DB or credentials)
 backend/data/
+data/chroma_dev/
 *.db
 *.db-wal
 *.db-shm

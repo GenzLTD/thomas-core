@@ -14,8 +14,9 @@ THOMAS 认证 / 身份 / 合规 / RAG 核服务。**独立发版仓**，由 `Gen
 | 核体量 | 4,233 行 Python |
 | 不含 | 产品 27 蓝图、`DatabaseManager.init_schema()` 全量 DDL、timeline / reports / central_brain 实现 |
 
-**单库不拆文件**：核与产品同写一个 `looma.db`，只是建表权分开。核启动时只 ensure
-`core_schema.sql`（7 表 + `schema_meta`），产品表由宿主 ensure `product_schema.sql`。
+**单库不拆文件**：核与产品同写一个 `looma.db`，只是建表权分开。核启动时 ensure
+`core_schema.sql`（7 表）和 `profile_schema.sql`（画像事实表 `profile_events`），
+再加上 `schema_meta`。产品表由宿主 ensure `product_schema.sql`。Chroma 只做检索。
 `THOMAS_SCHEMA_SPLIT=0` 为 legacy 模式，核退回跑 `DatabaseManager.init_schema()`（本仓
 不含该实现，故独立部署必须保持 `THOMAS_SCHEMA_SPLIT=1`）。
 
@@ -89,9 +90,10 @@ cd backend
 python ../scripts/smoke_core.py
 ```
 
-判据（9 项）：`src.app` 不可导入 / health 200 + `service=thomas-core` / register 201 /
-login 200 / consent 200 / 8 张表 + `schema_meta` 有 `core` 行 / ask 无 brain 时 500
-（非静默空答案）/ `BrainNotConfigured` 可捕获 / hooks 缺省 no-op 不炸。
+判据：`src.app` 不可导入 / health 200 + `service=thomas-core` + `chroma_ok` /
+register 201 / login 200 / consent 200 / 9 张表 + `schema_meta` 有 `core` 与 `profile` /
+ask 无 brain 时 500（非静默空答案）/ `BrainNotConfigured` 可捕获 / hooks 缺省 no-op 不炸 /
+答题结算写入 `profile_events` / 导出带身份元数据 / 删除后 SQL 与 Chroma 都空。
 exit 0 表示全过。
 
 ## 与宿主仓的关系

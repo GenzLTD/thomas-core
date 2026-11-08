@@ -46,6 +46,7 @@ _DB_DIR = _sql_dir()
 SCOPE_FILES = {
     "core": _DB_DIR / "core_schema.sql",
     "product": _DB_DIR / "product_schema.sql",
+    "profile": _DB_DIR / "profile_schema.sql",
 }
 # core 侧「在不在」的判定锚（宿主 split 启动时校验用）
 CORE_ANCHOR_TABLES = (

@@ -35,12 +35,14 @@ def create_core_app(env: str = "development") -> Flask:
     from src.thomas_core.routes.auth_routes import auth_bp
     from src.thomas_core.routes.compliance_routes import compliance_bp
     from src.thomas_core.routes.game_routes import game_bp
+    from src.thomas_core.routes.profile_routes import profile_bp
 
     app.register_blueprint(auth_bp, url_prefix="/v1/auth")
     app.register_blueprint(ask_bp, url_prefix="/v1")
     app.register_blueprint(compliance_bp, url_prefix="/v1/compliance")
     # 母舰答题。health 的 core_blueprints 仍只报 auth/ask/compliance，四机验收卡按这个三元组比对。
     app.register_blueprint(game_bp, url_prefix="/v1/game")
+    app.register_blueprint(profile_bp, url_prefix="/v1/profile")
 
     # --- Initialize database on first request (核只碰 core 面：刀 5c 起用 CoreDB) ---
     from src.thomas_core.db.core_db import CoreDB
@@ -77,6 +79,8 @@ def create_core_app(env: str = "development") -> Flask:
             (app.config.get("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or "").strip()
         )
         llm_ready = primary_llm == "ollama" or has_deepseek
+        from src.thomas_core.profile.chroma_index import chroma_ready
+
         return jsonify(
             status="ok" if llm_ready else "degraded",
             service="thomas-core",
@@ -85,6 +89,7 @@ def create_core_app(env: str = "development") -> Flask:
             deploy_track="looma",
             llm_provider=primary_llm,
             llm_configured=llm_ready,
+            chroma_ok=chroma_ready(app.config["DATABASE_PATH"]),
             core_blueprints=["auth", "ask", "compliance"],
         )
 

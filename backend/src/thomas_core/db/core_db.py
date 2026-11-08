@@ -84,6 +84,7 @@ class CoreDB:
         if include_product is None:
             include_product = not schema_loader.split_enabled()
         info = schema_loader.ensure_scope(self.db_path, "core")
+        schema_loader.ensure_scope(self.db_path, "profile")
         if include_product:
             schema_loader.ensure_scope(self.db_path, "product")
         return info

@@ -237,3 +237,16 @@ def _record_side_effects(db, session_id: str, result_type: str, session: dict) -
         )
     except Exception as exc:
         logger.warning("timeline: learning_activity skipped for %s: %s", g.user_id, exc)
+    try:
+        from src.thomas_core.profile.engine import record_quiz_result
+
+        record_quiz_result(
+            user_id=g.user_id,
+            session_id=session_id,
+            result_type=result_type,
+            total_score=session["total_score"],
+            correct_count=session["correct_count"],
+            total_questions=session["total_questions"],
+        )
+    except Exception as exc:
+        logger.warning("profile: quiz_result skipped for %s: %s", g.user_id, exc)

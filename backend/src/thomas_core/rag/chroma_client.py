@@ -4,11 +4,30 @@ Migrated from old chroma_client/vector_store, adapted for Flask.
 Supports local (embedded) and remote (Docker container) modes.
 """
 from __future__ import annotations
-from __future__ import annotations
 import logging
+from pathlib import Path
+
 from flask import current_app
 
 logger = logging.getLogger("looma.chroma")
+
+
+def _data_dir(config) -> Path:
+    """库文件所在目录的绝对路径。相对 DATABASE_PATH 也先 resolve，避免写进发布目录的 cwd。"""
+    database = Path(config.get("DATABASE_PATH") or "data/looma.db")
+    if not database.is_absolute():
+        database = database.resolve()
+    return database.parent
+
+
+def _poetry_dir(config) -> Path:
+    raw = str(config.get("POETRY_CHROMA_PATH") or "poetry_full").strip()
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    if path.parts and path.parts[0] == "data":
+        path = Path(*path.parts[1:]) if len(path.parts) > 1 else Path("poetry_full")
+    return _data_dir(config) / path
 
 _chroma_client = None
 
@@ -24,16 +43,18 @@ def _get_client():
 
     try:
         import chromadb
+        from chromadb.config import Settings
+
+        settings = Settings(anonymized_telemetry=False)
         if mode == "remote":
             host = config.get("CHROMA_HOST", "localhost")
             port = int(config.get("CHROMA_PORT", 8000))
-            _chroma_client = chromadb.HttpClient(host=host, port=port)
+            _chroma_client = chromadb.HttpClient(host=host, port=port, settings=settings)
             logger.info(f"ChromaDB: remote mode (host={host}, port={port})")
         else:
-            from pathlib import Path
-            db_dir = Path(config.get("DATABASE_PATH", "data/looma.db")).parent / "chroma"
+            db_dir = _data_dir(config) / "chroma"
             db_dir.mkdir(parents=True, exist_ok=True)
-            _chroma_client = chromadb.PersistentClient(path=str(db_dir))
+            _chroma_client = chromadb.PersistentClient(path=str(db_dir), settings=settings)
             logger.info(f"ChromaDB: local persistent mode (path={db_dir})")
     except ImportError:
         logger.warning("chromadb not installed — RAG search unavailable")
@@ -167,14 +188,8 @@ def _get_poetry_client():
     _poetry_client_lock = True
 
     try:
-        from pathlib import Path
         config = current_app.config
-        poetry_path = Path(config.get("POETRY_CHROMA_PATH", "data/poetry_full"))
-
-        # Resolve relative path against the app root (where DATABASE_PATH lives)
-        if not poetry_path.is_absolute():
-            db_root = Path(config.get("DATABASE_PATH", "data/looma.db")).parent
-            poetry_path = (db_root / poetry_path).resolve()
+        poetry_path = _poetry_dir(config)
 
         if not poetry_path.is_dir():
             logger.warning(f"Poetry ChromaDB dir not found: {poetry_path}")
@@ -182,6 +197,7 @@ def _get_poetry_client():
             return None
 
         import chromadb
+        from chromadb.config import Settings
         import os
         import tempfile
         import shutil
@@ -193,9 +209,13 @@ def _get_poetry_client():
             work_dir = tempfile.mkdtemp(prefix="poetry_chroma_")
             logger.info(f"Poetry ChromaDB is read-only, copying to {work_dir}")
             shutil.copytree(str(poetry_path), work_dir, dirs_exist_ok=True)
-            _poetry_client = chromadb.PersistentClient(path=work_dir)
+            _poetry_client = chromadb.PersistentClient(
+                path=work_dir, settings=Settings(anonymized_telemetry=False)
+            )
         else:
-            _poetry_client = chromadb.PersistentClient(path=str(poetry_path))
+            _poetry_client = chromadb.PersistentClient(
+                path=str(poetry_path), settings=Settings(anonymized_telemetry=False)
+            )
 
         logger.info(f"Poetry ChromaDB client initialized (path={poetry_path})")
     except ImportError:

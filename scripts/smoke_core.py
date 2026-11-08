@@ -28,6 +28,7 @@ sys.path.insert(0, str(BACKEND))
 _DB = Path(tempfile.mkdtemp(prefix="core-smoke-")) / "core.db"
 os.environ["DATABASE_PATH"] = str(_DB)
 os.environ["THOMAS_SCHEMA_SPLIT"] = "1"
+os.environ["PROFILE_EMBED"] = "deterministic"
 # Supabase 相关留空，避免走真网络 / 真 key
 for k in (
     "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_ANON_KEY",
@@ -42,6 +43,73 @@ results: list[tuple[str, bool, str]] = []
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
     print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
+
+
+def _check_profile(c, headers) -> None:
+    """答题结算写 SQL，Chroma 带身份元数据，删除后两边都空。"""
+    from src.thomas_core.profile.engine import ProfileEventRejected, record_profile_event
+
+    rejected = False
+    try:
+        record_profile_event(
+            user_id="someone",
+            domain="learning",
+            event_type="quiz_result",
+            payload={},
+            source="game",
+            consent_scope="",
+        )
+    except ProfileEventRejected:
+        rejected = True
+    check("画像缺 consent_scope 拒写", rejected)
+
+    started = c.post("/v1/game/start", headers=headers)
+    session_id = (started.get_json() or {}).get("session_id") or ""
+    for n in range(1, 6):
+        c.post("/v1/game/answer", headers=headers, json={
+            "session_id": session_id,
+            "question_id": f"q{n}",
+            "option_ids": ["a"],
+        })
+    result = c.get(f"/v1/game/result?session_id={session_id}", headers=headers)
+    body = result.get_json() or {}
+    check("quiz result 200 专家级",
+          result.status_code == 200 and body.get("result_type") == "专家级",
+          f"status={result.status_code} type={body.get('result_type')}")
+
+    conn = sqlite3.connect(_DB)
+    row = conn.execute(
+        "SELECT domain, consent_scope, event_type, enterprise_visible FROM profile_events"
+    ).fetchone()
+    conn.close()
+    check("结算写入 profile_events",
+          row == ("learning", "game_quiz", "quiz_result", 0),
+          f"row={row}")
+
+    exported = c.get("/v1/profile/export", headers=headers)
+    payload = exported.get_json() or {}
+    vectors = payload.get("vectors") or []
+    meta_ok = bool(vectors) and all(
+        (item.get("metadata") or {}).get("user_id")
+        and (item.get("metadata") or {}).get("domain")
+        and (item.get("metadata") or {}).get("consent_scope")
+        for item in vectors
+    )
+    check("export 含 SQL 事件且向量带三元组",
+          exported.status_code == 200 and len(payload.get("events") or []) == 1 and meta_ok,
+          f"status={exported.status_code} events={len(payload.get('events') or [])} vectors={len(vectors)}")
+
+    deleted = c.delete("/v1/profile", headers=headers)
+    gone = deleted.get_json() or {}
+    conn = sqlite3.connect(_DB)
+    left = conn.execute("SELECT COUNT(*) FROM profile_events").fetchone()[0]
+    conn.close()
+    again = c.get("/v1/profile/export", headers=headers).get_json() or {}
+    check("delete_user_data 后 SQL 与 Chroma 都空",
+          deleted.status_code == 200 and left == 0 and gone.get("chroma_deleted") == 1
+          and not again.get("events") and not again.get("vectors"),
+          f"status={deleted.status_code} sql_left={left} chroma_deleted={gone.get('chroma_deleted')} "
+          f"events={len(again.get('events') or [])} vectors={len(again.get('vectors') or [])}")
 
 
 def main() -> int:
@@ -70,6 +138,8 @@ def main() -> int:
     check("/health 200 + service=thomas-core",
           r.status_code == 200 and body.get("service") == "thomas-core",
           f"status={r.status_code} service={body.get('service')}")
+    check("health chroma_ok 是布尔值", isinstance(body.get("chroma_ok"), bool),
+          f"chroma_ok={body.get('chroma_ok')}")
 
     email = "smoke@core.local"
     r_reg = c.post("/v1/auth/register",
@@ -91,7 +161,8 @@ def main() -> int:
     ).fetchone()[0]
     scopes = [x[0] for x in conn.execute("select distinct scope from schema_meta")]
     conn.close()
-    check("8 表 + schema_meta 有 core", n_tables == 8 and "core" in scopes,
+    check("9 表 + schema_meta 有 core/profile",
+          n_tables == 9 and "core" in scopes and "profile" in scopes,
           f"tables={n_tables} scopes={scopes}")
 
     # ask 未注册 brain：应失败而非静默空答案
@@ -113,6 +184,8 @@ def main() -> int:
     check("hooks 缺省 no-op / None（宿主缺失不炸）",
           hooks._default_timeline_logger() is None
           and hooks._default_report_manager_factory() is None)
+
+    _check_profile(c, headers)
 
     passed = sum(1 for _, ok, _ in results if ok)
     print(f"\nverdict: {'PASS' if passed == len(results) else 'FAIL'} "

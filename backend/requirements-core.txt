@@ -24,6 +24,5 @@ opencc-python-reimplemented>=0.1.7
 # Testing
 pytest>=7.4.0
 
-# --- 可选：RAG 命中时才需要 ---
-# chromadb>=0.5.0
-# onnxruntime>=1.17.0
+# 画像检索层。版本钉在 requirements-core.pinned.txt；不可用时核仍能启动。
+chromadb==1.5.9
