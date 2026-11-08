@@ -9,6 +9,7 @@ from src.thomas_core.identity.ledger_subject import ensure_principal_sub
 from src.thomas_core.invitation import engine
 
 invitation_bp = Blueprint("invitation", __name__)
+credential_bp = Blueprint("device_credential", __name__)
 
 _AUDIT_KEYS = ("tenant", "audience", "purpose", "device_policy")
 
@@ -62,7 +63,7 @@ def inspect_invitation(invitation_id: str):
 def prepare_redemption(invitation_id: str):
     actor = _principal()
     try:
-        result = engine.prepare(current_app._db, invitation_id)
+        result = engine.prepare(current_app._db, invitation_id, actor)
     except engine.InvitationError as exc:
         return _error(exc)
     _audit(actor, "invitation.prepare_redemption", result)
@@ -93,3 +94,21 @@ def revoke_invitation(invitation_id: str):
         return _error(exc)
     _audit(actor, "invitation.revoke", result)
     return jsonify(result["http"])
+
+
+@credential_bp.route("", methods=["POST"])
+@require_auth
+def enroll_credential():
+    actor = _principal()
+    try:
+        result = engine.enroll_credential(current_app._db, actor, request.get_json(silent=True) or {})
+    except engine.InvitationError as exc:
+        return _error(exc)
+    get_audit_logger().log_from_request(
+        actor=actor,
+        action="device_credential.enroll",
+        resource_type="device_credential",
+        resource_id=result["credential_id"][:12],
+        metadata={"audience": result["audience"], "verifier_ref": result["verifier_ref"]},
+    )
+    return jsonify(result), 201

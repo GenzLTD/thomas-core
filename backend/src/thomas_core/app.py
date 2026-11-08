@@ -35,7 +35,7 @@ def create_core_app(env: str = "development") -> Flask:
     from src.thomas_core.routes.auth_routes import auth_bp
     from src.thomas_core.routes.compliance_routes import compliance_bp
     from src.thomas_core.routes.game_routes import game_bp
-    from src.thomas_core.routes.invitation_routes import invitation_bp
+    from src.thomas_core.routes.invitation_routes import credential_bp, invitation_bp
     from src.thomas_core.routes.profile_routes import profile_bp
 
     app.register_blueprint(auth_bp, url_prefix="/v1/auth")
@@ -45,6 +45,7 @@ def create_core_app(env: str = "development") -> Flask:
     app.register_blueprint(game_bp, url_prefix="/v1/game")
     app.register_blueprint(profile_bp, url_prefix="/v1/profile")
     app.register_blueprint(invitation_bp, url_prefix="/v1/invitations")
+    app.register_blueprint(credential_bp, url_prefix="/v1/device-credentials")
 
     # --- Initialize database on first request (核只碰 core 面：刀 5c 起用 CoreDB) ---
     from src.thomas_core.db.core_db import CoreDB

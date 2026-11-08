@@ -513,6 +513,57 @@ class CoreDB:
             ),
         )
 
+    def audience_is_issuable(self, conn, audience: str) -> bool:
+        row = conn.execute(
+            """SELECT 1 FROM tenant_audience_policies
+               WHERE audience = ? AND issue_allowed = 1 LIMIT 1""",
+            (audience,),
+        ).fetchone()
+        return row is not None
+
+    def find_device_credential(self, conn, credential_id: str):
+        row = conn.execute(
+            """SELECT credential_id, principal_sub, audience, verifier_ref, status
+               FROM device_credentials WHERE credential_id = ?""",
+            (credential_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def insert_device_credential(self, conn, row: dict) -> None:
+        conn.execute(
+            """INSERT INTO device_credentials (
+                   credential_id, principal_sub, audience, verifier_ref, status
+               ) VALUES (?, ?, ?, ?, 'active')""",
+            (row["credential_id"], row["principal_sub"], row["audience"], row["verifier_ref"]),
+        )
+
+    def insert_device_challenge(self, conn, row: dict) -> None:
+        conn.execute(
+            """INSERT INTO device_challenges (
+                   challenge_id, nonce, audience, principal_binding, purpose,
+                   invitation_id, expires_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row["challenge_id"], row["nonce"], row["audience"], row["principal_binding"],
+                row["purpose"], row["invitation_id"], row["expires_at"],
+            ),
+        )
+
+    def find_device_challenge(self, conn, challenge_id: str):
+        row = conn.execute(
+            "SELECT * FROM device_challenges WHERE challenge_id = ?",
+            (challenge_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def consume_device_challenge(self, conn, challenge_id: str) -> bool:
+        cursor = conn.execute(
+            """UPDATE device_challenges SET consumed = 1
+               WHERE challenge_id = ? AND consumed = 0""",
+            (challenge_id,),
+        )
+        return cursor.rowcount == 1
+
     def update_invitation_state(self, conn, invitation_id: str, *, status: str, redemption_count: int) -> None:
         conn.execute(
             """UPDATE invitations

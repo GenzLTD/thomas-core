@@ -23,6 +23,7 @@ def boot(tmp_path, *, secret: str = "", strict: str = "0"):
     os.environ["THOMAS_SCHEMA_STRICT"] = strict
     os.environ["PROFILE_EMBED"] = "deterministic"
     os.environ["ETHOS_AUTH_SECRET"] = secret
+    os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
     for key in _EMAIL_ENV:
         os.environ.pop(key, None)
     from src.thomas_core.compliance.audit import reset_audit_logger
@@ -62,7 +63,7 @@ def redeem(client, headers, invitation_id: str, key: str, **extra):
     return client.post(f"/v1/invitations/{invitation_id}/redeem", headers=headers, json=body)
 
 
-def test_cold_start_creates_seed_and_twelve_tables(tmp_path):
+def test_cold_start_creates_seed_and_fourteen_tables(tmp_path):
     app, db_path = boot(tmp_path)
     assert app.test_client().get("/health").status_code == 200
     conn = sqlite3.connect(db_path)
@@ -80,6 +81,7 @@ def test_cold_start_creates_seed_and_twelve_tables(tmp_path):
         "signal_ingest", "signal_outbox", "signal_dlq",
         "profile_events", "schema_meta",
         "invitations", "invitation_redemptions", "tenant_audience_policies",
+        "device_challenges", "device_credentials",
     }
     assert seed == (1, "not_required")
 
@@ -105,7 +107,10 @@ def test_existing_db_strict_boot_rebuilds_invitation_tables(tmp_path):
     names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     version = conn.execute("SELECT version FROM schema_meta WHERE scope = 'core'").fetchone()[0]
     conn.close()
-    assert {"invitations", "invitation_redemptions", "tenant_audience_policies"} <= names
+    assert {
+        "invitations", "invitation_redemptions", "tenant_audience_policies",
+        "device_challenges", "device_credentials",
+    } <= names
     assert version != "stale"
     again = ensure_scope(str(db_path), "core", strict=True)
     assert again["drift"] is False
@@ -204,7 +209,7 @@ def test_expired_revoked_exhausted_and_scope_errors(tmp_path):
 def test_registered_device_policy_fails_closed(tmp_path):
     app, db_path = boot(tmp_path)
     client = app.test_client()
-    headers, _user_id = register(client, "device@example.com")
+    headers, user_id = register(client, "device@example.com")
     conn = sqlite3.connect(db_path)
     conn.execute(
         """UPDATE tenant_audience_policies SET device_policy = 'registered_credential_required'
@@ -216,8 +221,15 @@ def test_registered_device_policy_fails_closed(tmp_path):
     assert created.status_code == 201
     invitation_id = created.get_json()["invitation"]["id"]
     prepared = client.post(f"/v1/invitations/{invitation_id}/prepare-redemption", headers=headers)
-    redeemed = redeem(client, headers, invitation_id, "device-redeem")
-    assert prepared.status_code == 409
+    challenge = (prepared.get_json() or {}).get("challenge") or {}
+    redeemed = redeem(client, headers, invitation_id, "device-redeem", device_proof={
+        "challenge_id": challenge.get("challenge_id"),
+        "credential_id": "unregistered-ring",
+        "proof": "not-a-proof",
+    })
+    assert prepared.status_code == 200
+    assert challenge.get("nonce")
+    assert challenge.get("principal_binding") == user_id
     assert redeemed.status_code == 409
     conn = sqlite3.connect(db_path)
     count, status = conn.execute(

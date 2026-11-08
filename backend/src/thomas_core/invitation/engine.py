@@ -1,18 +1,23 @@
-"""邀请生命周期，只做 not_required。
+"""邀请生命周期。
 
 issuer 与 redeemer 都来自已验证会话。调用方不能指定签发人。
-设备策略若不是 not_required，准备和兑换都直接拒绝，不降级，也不发挑战。
+not_required 不发挑战。registered_credential_required 先发一次性挑战，
+再由当前验证器核对证明。默认验证器关闭，不把摘要当成通过。
 """
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+
+from .verifier import current_verifier
 
 TERMINAL_TENANT = "genzer.terminal"
 TERMINAL_AUDIENCE = "genzer.terminal.registration"
 TERMINAL_PURPOSE = "account_registration"
 _DEFAULT_TTL = timedelta(hours=24)
+_CHALLENGE_TTL = timedelta(minutes=5)
 _MODES = ("not_required", "registered_credential_required")
 
 
@@ -94,18 +99,21 @@ def inspect(db, invitation_id: str) -> dict:
     return {"http": http, "audit": audit, "invitation_id": row["id"]}
 
 
-def prepare(db, invitation_id: str) -> dict:
+def prepare(db, invitation_id: str, principal_sub: str) -> dict:
+    now = _now()
     conn = db.open_immediate()
     try:
         row = db.find_invitation(conn, invitation_id)
         if not row:
             raise InvitationError(404, "not_found", "invitation not found")
-        _require_not_required(row)
+        if row["recipient_sub"] and row["recipient_sub"] != principal_sub:
+            raise InvitationError(403, "recipient_mismatch", "recipient does not match")
+        challenge = _issue_challenge(db, conn, row, principal_sub, now)
         http = {
             "invitation_id": row["id"],
             "status": row["status"],
             "device_policy": {"mode": row["device_policy"]},
-            "challenge": None,
+            "challenge": challenge,
             "consumes_invitation": False,
         }
         audit = _audit_meta(row)
@@ -114,6 +122,50 @@ def prepare(db, invitation_id: str) -> dict:
         db.finish_immediate(conn, commit=False)
         raise
     return {"http": http, "audit": audit, "invitation_id": row["id"]}
+
+
+def enroll_credential(db, principal_sub: str, body: dict) -> dict:
+    body = _object(body)
+    if _has_email_key(body):
+        raise InvitationError(422, "invalid_credential", "credential must not carry an email")
+    credential_id = body.get("credential_id")
+    audience = body.get("audience")
+    if not isinstance(credential_id, str) or not credential_id.strip():
+        raise InvitationError(422, "invalid_credential", "credential_id is required")
+    if not isinstance(audience, str) or not audience.strip():
+        raise InvitationError(422, "invalid_credential", "audience is required")
+    credential_id = credential_id.strip()
+    audience = audience.strip()
+    if len(credential_id) > 128 or "@" in credential_id:
+        raise InvitationError(422, "invalid_credential", "credential_id is not a device handle")
+    verifier = current_verifier()
+    conn = db.open_immediate()
+    try:
+        if not db.audience_is_issuable(conn, audience):
+            raise InvitationError(403, "policy_denied", "policy does not allow this audience")
+        existing = db.find_device_credential(conn, credential_id)
+        if existing:
+            if existing["principal_sub"] != principal_sub or existing["audience"] != audience:
+                raise InvitationError(409, "credential_conflict", "credential belongs to another principal")
+            stored = existing
+        else:
+            db.insert_device_credential(conn, {
+                "credential_id": credential_id,
+                "principal_sub": principal_sub,
+                "audience": audience,
+                "verifier_ref": verifier.name,
+            })
+            stored = db.find_device_credential(conn, credential_id)
+        db.finish_immediate(conn, commit=True)
+    except Exception:
+        db.finish_immediate(conn, commit=False)
+        raise
+    return {
+        "credential_id": stored["credential_id"],
+        "audience": stored["audience"],
+        "status": stored["status"],
+        "verifier_ref": stored["verifier_ref"],
+    }
 
 
 def redeem(db, invitation_id: str, redeemer_sub: str, body: dict) -> dict:
@@ -141,7 +193,6 @@ def redeem(db, invitation_id: str, redeemer_sub: str, body: dict) -> dict:
         _match_scope(body, row)
         if row["recipient_sub"] and row["recipient_sub"] != redeemer_sub:
             raise InvitationError(403, "recipient_mismatch", "recipient does not match")
-        _require_not_required(row)
 
         if row["status"] == "revoked":
             raise InvitationError(409, "revoked", "invitation revoked")
@@ -156,12 +207,12 @@ def redeem(db, invitation_id: str, redeemer_sub: str, body: dict) -> dict:
             raise InvitationError(410, "expired", "invitation expired")
         if row["status"] != "active":
             raise InvitationError(409, "conflict", "invitation is not active")
+        verification = _device_verification(db, conn, row, redeemer_sub, body, now)
         if db.find_redemption_for_principal(conn, invitation_id, redeemer_sub):
             raise InvitationError(409, "exhausted", "invitation exhausted")
 
         redeemed_at = _stamp(now)
         redemption_id = str(uuid.uuid4())
-        verification = json.dumps({"required": False, "verified": False})
         db.insert_redemption(conn, {
             "id": redemption_id,
             "invitation_id": invitation_id,
@@ -249,10 +300,7 @@ def _redeemed(redemption: dict, invitation: dict, *, duplicate: bool) -> dict:
                 "purpose": redemption["purpose"],
                 "redeemer": {"sub": redemption["redeemer_sub"]},
                 "redeemed_at": redemption["redeemed_at"],
-                "device_verification": {
-                    "required": bool(verification.get("required")),
-                    "verified": bool(verification.get("verified")),
-                },
+                "device_verification": _verification_body(verification),
                 "idempotency_key": redemption["idempotency_key"],
             },
             "duplicate": duplicate,
@@ -282,9 +330,101 @@ def _audit_meta(row: dict) -> dict:
     }
 
 
-def _require_not_required(row: dict) -> None:
-    if row["device_policy"] != "not_required":
+def _issue_challenge(db, conn, row: dict, principal_sub: str, now: datetime):
+    mode = row["device_policy"]
+    if mode == "not_required":
+        return None
+    if mode != "registered_credential_required":
         raise InvitationError(409, "device_policy_unsupported", "device policy is not available")
+    if row["status"] != "active" or _is_past(row["expires_at"], now):
+        raise InvitationError(409, "conflict", "invitation is not active")
+    challenge_id = str(uuid.uuid4())
+    nonce = secrets.token_hex(32)
+    expires_at = _stamp(now + _CHALLENGE_TTL)
+    db.insert_device_challenge(conn, {
+        "challenge_id": challenge_id,
+        "nonce": nonce,
+        "audience": row["audience"],
+        "principal_binding": principal_sub,
+        "purpose": row["purpose"],
+        "invitation_id": row["id"],
+        "expires_at": expires_at,
+    })
+    return {
+        "challenge_id": challenge_id,
+        "nonce": nonce,
+        "audience": row["audience"],
+        "principal_binding": principal_sub,
+        "purpose": row["purpose"],
+        "invitation_id": row["id"],
+        "expires_at": expires_at,
+    }
+
+
+def _device_verification(db, conn, row: dict, redeemer_sub: str, body: dict, now: datetime) -> str:
+    mode = row["device_policy"]
+    if mode == "not_required":
+        return json.dumps({"required": False, "verified": False})
+    if mode != "registered_credential_required":
+        raise InvitationError(409, "device_policy_unsupported", "device policy is not available")
+    challenge_id, credential_id, proof = _proof_fields(body)
+    challenge = db.find_device_challenge(conn, challenge_id)
+    if not challenge or challenge["invitation_id"] != row["id"]:
+        raise InvitationError(409, "challenge_rejected", "challenge does not match this invitation")
+    if challenge["principal_binding"] != redeemer_sub:
+        raise InvitationError(409, "challenge_rejected", "challenge belongs to another principal")
+    if challenge["audience"] != row["audience"] or challenge["purpose"] != row["purpose"]:
+        raise InvitationError(409, "challenge_rejected", "challenge scope does not match")
+    if challenge["consumed"]:
+        raise InvitationError(409, "challenge_reused", "challenge already used")
+    if _is_past(challenge["expires_at"], now):
+        raise InvitationError(409, "challenge_expired", "challenge expired")
+    credential = db.find_device_credential(conn, credential_id)
+    if (
+        not credential
+        or credential["status"] != "active"
+        or credential["principal_sub"] != redeemer_sub
+        or credential["audience"] != row["audience"]
+    ):
+        raise InvitationError(409, "credential_unregistered", "credential is not registered")
+    verifier = current_verifier()
+    if credential["verifier_ref"] != verifier.name or not verifier.verify(
+        nonce=challenge["nonce"],
+        challenge_id=challenge_id,
+        credential_id=credential_id,
+        proof=proof,
+    ):
+        raise InvitationError(409, "device_proof_rejected", "device proof was rejected")
+    if not db.consume_device_challenge(conn, challenge_id):
+        raise InvitationError(409, "challenge_reused", "challenge already used")
+    return json.dumps({
+        "required": True,
+        "verified": True,
+        "credential_id": credential_id,
+    })
+
+
+def _proof_fields(body: dict) -> tuple[str, str, str]:
+    raw = body.get("device_proof")
+    if not isinstance(raw, dict):
+        raise InvitationError(409, "device_proof_required", "device proof is required")
+    challenge_id = raw.get("challenge_id")
+    credential_id = raw.get("credential_id")
+    proof = raw.get("proof")
+    if not all(isinstance(item, str) and item.strip() for item in (challenge_id, credential_id, proof)):
+        raise InvitationError(409, "device_proof_required", "device proof is required")
+    return challenge_id.strip(), credential_id.strip(), proof.strip()
+
+
+def _verification_body(verification: dict) -> dict:
+    body = {
+        "required": bool(verification.get("required")),
+        "verified": bool(verification.get("verified")),
+    }
+    credential_id = verification.get("credential_id")
+    if isinstance(credential_id, str) and credential_id:
+        body["credential_id"] = credential_id
+    return body
 
 
 def _match_scope(body: dict, row: dict) -> None:

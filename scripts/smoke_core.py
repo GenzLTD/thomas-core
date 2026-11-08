@@ -7,7 +7,7 @@
   1. `src.app` 不可导入（证明已脱离宿主）
   2. `create_core_app()` 可装配，/health = 200 且 service=thomas-core
   3. register 201 / login 200 / consent 200
-  4. 表集合为 core 7 表 + profile_events + schema_meta + invitation 三表
+  4. 表集合为 core 7 表 + profile_events + schema_meta + invitation 三表 + 设备两表
   5. `/v1/ask` 在未注册 brain 时 500 且日志含 BrainNotConfigured（非静默空答案）
   6. 邀请 issue → inspect → prepare → redeem，重复兑换不增加次数
 """
@@ -117,6 +117,7 @@ _EXPECTED_TABLES = {
     "signal_ingest", "signal_outbox", "signal_dlq",
     "profile_events", "schema_meta",
     "invitations", "invitation_redemptions", "tenant_audience_policies",
+    "device_challenges", "device_credentials",
 }
 
 
@@ -220,9 +221,14 @@ def _check_invitation(c, headers) -> None:
           naked.status_code == 401 and denied.status_code == 403,
           f"naked={naked.status_code} denied={denied.status_code}")
 
+    _check_device_proof(c, headers)
+
     conn = sqlite3.connect(_DB)
     chunks = []
-    for table in ("invitations", "invitation_redemptions", "tenant_audience_policies"):
+    for table in (
+        "invitations", "invitation_redemptions", "tenant_audience_policies",
+        "device_challenges", "device_credentials",
+    ):
         for row in conn.execute(f"SELECT * FROM {table}"):
             chunks.append(" ".join("" if value is None else str(value) for value in row))
     actions = set()
@@ -241,6 +247,111 @@ def _check_invitation(c, headers) -> None:
           and bool(resource_ids)
           and all(0 < len(item) <= 12 for item in resource_ids),
           f"actions={sorted(actions)}")
+
+
+def _check_device_proof(c, headers) -> None:
+    """已登记设备对一次性挑战给出证明。默认验证器先拒绝，再只在本进程打开 stub。"""
+    os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
+    from src.thomas_core.invitation.verifier import stub_proof
+
+    conn = sqlite3.connect(_DB)
+    conn.execute(
+        """INSERT OR IGNORE INTO tenant_audience_policies
+           (tenant, audience, purpose, issue_allowed, device_policy)
+           VALUES ('genzer.terminal', 'genzer.terminal.registration', 'device_proof',
+                   1, 'registered_credential_required')"""
+    )
+    conn.commit()
+    conn.close()
+    issued = c.post("/v1/invitations", headers=headers, json={
+        "idempotency_key": "smoke-device",
+        "tenant": "genzer.terminal",
+        "audience": "genzer.terminal.registration",
+        "purpose": "device_proof",
+        "max_redemptions": 2,
+    })
+    invitation_id = ((issued.get_json() or {}).get("invitation") or {}).get("id")
+    prepared = c.post(f"/v1/invitations/{invitation_id}/prepare-redemption", headers=headers, json={})
+    challenge = (prepared.get_json() or {}).get("challenge") or {}
+    check("设备策略准备发出一次性挑战",
+          issued.status_code == 201
+          and prepared.status_code == 200
+          and bool(challenge.get("nonce"))
+          and bool(challenge.get("principal_binding")),
+          f"issue={issued.status_code} prepare={prepared.status_code}")
+    enrolled = c.post("/v1/device-credentials", headers=headers, json={
+        "credential_id": "smoke-ring",
+        "audience": "genzer.terminal.registration",
+    })
+    proof = stub_proof(challenge.get("nonce") or "", "smoke-ring", challenge.get("challenge_id") or "")
+    rejected = c.post(
+        f"/v1/invitations/{invitation_id}/redeem",
+        headers=headers,
+        json={
+            "idempotency_key": "smoke-device-closed",
+            "audience": "genzer.terminal.registration",
+            "purpose": "device_proof",
+            "device_proof": {
+                "challenge_id": challenge.get("challenge_id"),
+                "credential_id": "smoke-ring",
+                "proof": proof,
+            },
+        },
+    )
+    check("默认验证器拒绝摘要",
+          enrolled.status_code == 201
+          and (enrolled.get_json() or {}).get("verifier_ref") == "closed"
+          and rejected.status_code == 409,
+          f"enroll={enrolled.status_code} redeem={rejected.status_code}")
+
+    os.environ["THOMAS_DEVICE_VERIFIER"] = "stub"
+    try:
+        stub_enroll = c.post("/v1/device-credentials", headers=headers, json={
+            "credential_id": "smoke-ring-stub",
+            "audience": "genzer.terminal.registration",
+        })
+        stub_proof_value = stub_proof(
+            challenge.get("nonce") or "", "smoke-ring-stub", challenge.get("challenge_id") or "",
+        )
+        accepted = c.post(
+            f"/v1/invitations/{invitation_id}/redeem",
+            headers=headers,
+            json={
+                "idempotency_key": "smoke-device-stub",
+                "audience": "genzer.terminal.registration",
+                "purpose": "device_proof",
+                "device_proof": {
+                    "challenge_id": challenge.get("challenge_id"),
+                    "credential_id": "smoke-ring-stub",
+                    "proof": stub_proof_value,
+                },
+            },
+        )
+        accepted_body = accepted.get_json() or {}
+        verification = (accepted_body.get("redemption") or {}).get("device_verification") or {}
+        reused = c.post(
+            f"/v1/invitations/{invitation_id}/redeem",
+            headers=headers,
+            json={
+                "idempotency_key": "smoke-device-reuse",
+                "audience": "genzer.terminal.registration",
+                "purpose": "device_proof",
+                "device_proof": {
+                    "challenge_id": challenge.get("challenge_id"),
+                    "credential_id": "smoke-ring-stub",
+                    "proof": stub_proof_value,
+                },
+            },
+        )
+        check("stub 验证器只放行一次",
+              stub_enroll.status_code == 201
+              and accepted.status_code == 200
+              and verification.get("verified") is True
+              and "access_token" not in accepted_body
+              and reused.status_code == 409,
+              f"enroll={stub_enroll.status_code} redeem={accepted.status_code} reuse={reused.status_code}")
+    finally:
+        os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
 
 
 def main() -> int:
@@ -298,7 +409,7 @@ def main() -> int:
     )}
     scopes = [row[0] for row in conn.execute("select distinct scope from schema_meta")]
     conn.close()
-    check("12 表集合 + schema_meta 有 core/profile",
+    check("14 表集合 + schema_meta 有 core/profile",
           names == _EXPECTED_TABLES and "core" in scopes and "profile" in scopes,
           f"extra={sorted(names - _EXPECTED_TABLES)} missing={sorted(_EXPECTED_TABLES - names)} scopes={scopes}")
 

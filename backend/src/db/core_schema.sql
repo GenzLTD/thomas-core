@@ -171,3 +171,25 @@ INSERT OR IGNORE INTO tenant_audience_policies
     (tenant, audience, purpose, issue_allowed, device_policy)
 VALUES
     ('genzer.terminal', 'genzer.terminal.registration', 'account_registration', 1, 'not_required');
+
+-- 设备证明信封。credential_id 只用于查找。默认策略仍是上面那条 not_required。
+CREATE TABLE IF NOT EXISTS device_challenges (
+    challenge_id      TEXT PRIMARY KEY,
+    nonce             TEXT NOT NULL,
+    audience          TEXT NOT NULL,
+    principal_binding TEXT NOT NULL,
+    purpose           TEXT NOT NULL,
+    invitation_id     TEXT NOT NULL,
+    expires_at        TEXT NOT NULL,
+    consumed          INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS device_credentials (
+    credential_id  TEXT PRIMARY KEY,
+    principal_sub  TEXT NOT NULL,
+    audience       TEXT NOT NULL,
+    verifier_ref   TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'active',
+    enrolled_at    TEXT DEFAULT (datetime('now'))
+);
