@@ -4,7 +4,7 @@
   "unique_protocol_source": true,
   "note": "本仓认的唯一协议真源。GenzLTD/gfcc 是写作汇合处；本钉让 thomas-core 指到当时生效的 Ask/五端口/信号/邀请。刷新 = 改 JSON + 改本文件 + 新提交。实现分叉不要求改契约。",
   "repo": "https://github.com/GenzLTD/gfcc",
-  "commit": "bdf3a27dffd737bd10b74c8545e753689c1003c8",
+  "commit": "09d9e835a0fbd9c1334c029a2fc72a50e5eea648",
   "pinned_at": "2026-11-08",
   "families": {
     "l0": {
