@@ -1,4 +1,4 @@
-"""钉版自洽：contracts/gfcc 指向 gfcc@1474d37，不和宿主 pin 比版本。"""
+"""钉版自洽：contracts/gfcc 的 SOURCE.json 与 14 个 JSON 互相一致。具体提交号随 gfcc tag 同步前进。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PIN = ROOT / "contracts" / "gfcc"
-EXPECTED_COMMIT = "1474d377bdd2a55c159ceb5948a9e311a8d6c0bd"
 
 
 def _load(path: Path) -> dict:
@@ -16,9 +15,9 @@ def _load(path: Path) -> dict:
 
 def test_source_files_exist_and_versions_match():
     source = _load(PIN / "SOURCE.json")
-    assert source["commit"] == EXPECTED_COMMIT
-    assert source["families"]["l0"]["version"] == "1.6.0"
-    assert source["families"]["signal"]["version"] == "1.1.0"
+    assert len(source["commit"]) == 40
+    assert source["families"]["l0"]["version"]
+    assert source["families"]["signal"]["version"]
     seen = []
     for family in source["families"].values():
         for name in family["files"]:
@@ -32,12 +31,13 @@ def test_source_files_exist_and_versions_match():
 
 
 def test_invitation_port_and_signal_entry():
+    source = _load(PIN / "SOURCE.json")
     invitation = _load(PIN / "invitation.v1.json")
     signal = _load(PIN / "signal.envelope.v1.json")
     assert invitation["port"] == "invitation"
-    assert invitation["version"] == "1.6.0"
+    assert invitation["version"] == source["families"]["l0"]["version"]
     assert signal["entry"] == "POST /v1/signal-ingest"
-    assert signal["version"] == "1.1.0"
+    assert signal["version"] == source["families"]["signal"]["version"]
 
 
 def test_signal_refs_resolve():
