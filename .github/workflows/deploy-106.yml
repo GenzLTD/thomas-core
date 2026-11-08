@@ -11,13 +11,10 @@
 # 安全口径（FN-2026-11-07-01 退役对账教训，逐条内建）：
 #   1) 钉 SSH 主机密钥指纹（DEPLOY106_HOST_FINGERPRINT），严禁 StrictHostKeyChecking=no
 #      —— 退役 IP 会被云商回收转售，不钉指纹 = 把部署产物和私钥送给下一任住户
-#      ⚠️ 指纹类型必须是「客户端实际协商到的那把主机密钥」，不是"最强"的那把：
-#      appleboy/ssh-action@v1.2.0 → drone-ssh 1.8.0 → easyssh-proxy v1.5.0 → x/crypto/ssh v0.29.0，
-#      Go 客户端 supportedHostKeyAlgos 中 KeyAlgoECDSA256 排在 KeyAlgoED25519 之前
-#      （截至 x/crypto v0.57.0 仍如此），且 easyssh/drone-ssh 均不暴露 HostKeyAlgorithms，
-#      故协商结果恒为 ecdsa-sha2-nistp256。secret 必须填 ECDSA P-256 指纹，
-#        ssh-keyscan -t ecdsa <host> | ssh-keygen -lf -   # 取第二列（SHA256: 开头）
-#      填 ed25519 指纹会 handshake failed: host key fingerprint mismatch（2026-11-07 实测踩坑）
+#      登录用运行器自带的 OpenSSH（scripts/ci-ssh.sh）。不再用 appleboy/ssh-action：
+#      它每次先从 GitHub Releases 下载 drone-ssh，504 时任务还没连上服务器就失败。
+#      已存的指纹是 ECDSA P-256（2026-11-07 按当时 Go 客户端的协商结果录入）。
+#      脚本强制 HostKeyAlgorithms=ecdsa-sha2-nistp256，扫描结果对不上指纹就退出。
 #   2) 专用部署密钥 DEPLOY106_SSH_KEY（交付包 ci-prep/ 生成，私钥只进 GitHub secret、永不入仓），
 #      不复用 github/tencent 共用钥 id_ed25519；泄露只废这一把，轮换成本最小
 #   3) 本工作流只指向新机；旧机（阿里云 / 天翼 / 腾讯云旧实例）的部署工作流不再使用
@@ -133,18 +130,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: production-106   # 可选：Settings→Environments 里配 required reviewers 当人工闸
     steps:
+      - uses: actions/checkout@v4
       - name: 触发服务器侧部署（服务器经只读 deploy key 拉码，CI 不传制品）
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ vars.DEPLOY106_HOST }}
-          username: ${{ vars.DEPLOY106_USER || 'ubuntu' }}
-          key: ${{ secrets.DEPLOY106_SSH_KEY }}
-          fingerprint: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
-          command_timeout: 20m
-          script: |
-            set -e
-            SHA="${{ needs.sync-gfcc.outputs.sha || github.event.inputs.sha || github.sha }}"
-            ~/thomas/bin/deploy-thomas-core.sh "$SHA"
+        env:
+          DEPLOY106_HOST: ${{ vars.DEPLOY106_HOST }}
+          DEPLOY106_USER: ${{ vars.DEPLOY106_USER }}
+          DEPLOY106_SSH_KEY: ${{ secrets.DEPLOY106_SSH_KEY }}
+          DEPLOY106_HOST_FINGERPRINT: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
+        run: ./scripts/ci-ssh.sh deploy "${{ needs.sync-gfcc.outputs.sha || github.event.inputs.sha || github.sha }}"
 
   # 核部署成功之后才装 gfcc-kernel。失败不回滚 thomas-core。
   # 只听 127.0.0.1:5211，不改 nginx，不出境。钉子用刚部署的 SOURCE.json。
@@ -154,16 +147,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production-106
     steps:
+      - uses: actions/checkout@v4
       - name: 本机回环安装 gfcc-kernel
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ vars.DEPLOY106_HOST }}
-          username: ${{ vars.DEPLOY106_USER || 'ubuntu' }}
-          key: ${{ secrets.DEPLOY106_SSH_KEY }}
-          fingerprint: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
-          command_timeout: 20m
-          script: |
-            set -euo pipefail
-            mkdir -p "$HOME/thomas/bin"
-            install -m 755 "$HOME/thomas/current/scripts/deploy-gfcc-kernel.sh" "$HOME/thomas/bin/deploy-gfcc-kernel.sh"
-            "$HOME/thomas/bin/deploy-gfcc-kernel.sh"
+        env:
+          DEPLOY106_HOST: ${{ vars.DEPLOY106_HOST }}
+          DEPLOY106_USER: ${{ vars.DEPLOY106_USER }}
+          DEPLOY106_SSH_KEY: ${{ secrets.DEPLOY106_SSH_KEY }}
+          DEPLOY106_HOST_FINGERPRINT: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
+        run: ./scripts/ci-ssh.sh kernel
