@@ -5,7 +5,7 @@
 #
 # 纪律:
 #   - 只写 ~/thomas/（releases / current / .venv / data / logs / bin），不碰 /opt、不碰生产库
-#   - smoke 9/9 是硬门禁，不过就不切换 current
+#   - smoke 全过才切换 current，不过就不切换
 #   - 健康检查失败自动回滚到上一个 release
 #   - 真实凭据只进 ~/thomas/.env（chmod 600，运维面维护，CI 不碰）
 #   - 依赖一律钉版安装；禁 pip install 不带版本约束的包

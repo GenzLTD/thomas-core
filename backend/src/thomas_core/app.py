@@ -1,8 +1,8 @@
 """THOMAS core standalone app（刀 4；刀 5 起完全自足）。
 
-create_core_app() 只装配核面：auth / ask / compliance 三蓝图 + /health，
-与宿主 create_app()（:5200，27 蓝图）并存；同库不同写权面。
-R1：本 app 的写权只落在 core_schema 7 表（经 `CoreDB`，刀 5c）。
+create_core_app() 装配核面。health 仍只报告 auth / ask / compliance，
+另挂 game、profile、invitation。与宿主 create_app()（:5200）并存；同库不同写权面。
+R1：本 app 的写权落在 core_schema（锚表 7 张，invitation 三表同文件；经 `CoreDB`）。
 
 自足性（刀 5）：核不 import 任何宿主模块。ask 热路径上的三处产品依赖改走注入点 ——
 `hooks.record_interaction_log`（时间线埋点）/ `hooks.report_manager`（匹配报告）/
@@ -35,14 +35,16 @@ def create_core_app(env: str = "development") -> Flask:
     from src.thomas_core.routes.auth_routes import auth_bp
     from src.thomas_core.routes.compliance_routes import compliance_bp
     from src.thomas_core.routes.game_routes import game_bp
+    from src.thomas_core.routes.invitation_routes import invitation_bp
     from src.thomas_core.routes.profile_routes import profile_bp
 
     app.register_blueprint(auth_bp, url_prefix="/v1/auth")
     app.register_blueprint(ask_bp, url_prefix="/v1")
     app.register_blueprint(compliance_bp, url_prefix="/v1/compliance")
-    # 母舰答题。health 的 core_blueprints 仍只报 auth/ask/compliance，四机验收卡按这个三元组比对。
+    # 母舰答题和邀请都挂上。health 的 core_blueprints 仍只报 auth/ask/compliance，四机验收卡按这个三元组比对。
     app.register_blueprint(game_bp, url_prefix="/v1/game")
     app.register_blueprint(profile_bp, url_prefix="/v1/profile")
+    app.register_blueprint(invitation_bp, url_prefix="/v1/invitations")
 
     # --- Initialize database on first request (核只碰 core 面：刀 5c 起用 CoreDB) ---
     from src.thomas_core.db.core_db import CoreDB
@@ -90,6 +92,7 @@ def create_core_app(env: str = "development") -> Flask:
             llm_provider=primary_llm,
             llm_configured=llm_ready,
             chroma_ok=chroma_ready(app.config["DATABASE_PATH"]),
+            bridge_configured=bool((app.config.get("ETHOS_AUTH_SECRET") or "").strip()),
             core_blueprints=["auth", "ask", "compliance"],
         )
 

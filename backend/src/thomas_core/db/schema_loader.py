@@ -1,7 +1,7 @@
 """Scope-aware schema loader（Phase 1 刀 5：把两份 DDL 接进启动流程）。
 
 分工（RFC 裁决 2 / R1）：
-- `core`    → `core_schema.sql`（7 表：users / user_identities / consents / audit_logs / signal_ingest|outbox|dlq）
+- `core`    → `core_schema.sql`（锚表仍是 7 张；invitation 三表与种子策略同文件追加）
 - `product` → `product_schema.sql`（50 表 + 3 个 signal_* 只读视图）
 
 约束：

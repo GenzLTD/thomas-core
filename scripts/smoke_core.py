@@ -3,13 +3,13 @@
 用法：
     cd backend && python ../scripts/smoke_core.py
 
-判据（9 项，全过 exit 0）：
+判据（全过 exit 0）：
   1. `src.app` 不可导入（证明已脱离宿主）
   2. `create_core_app()` 可装配，/health = 200 且 service=thomas-core
   3. register 201 / login 200 / consent 200
-  4. 数据库 8 张表（core 7 表 + schema_meta），schema_meta 有 core 行
+  4. 表集合为 core 7 表 + profile_events + schema_meta + invitation 三表
   5. `/v1/ask` 在未注册 brain 时 500 且日志含 BrainNotConfigured（非静默空答案）
-  6. 核内模块级 import 不出现宿主包（惰性兼容 import 允许，但必须包在 try 内）
+  6. 邀请 issue → inspect → prepare → redeem，重复兑换不增加次数
 """
 from __future__ import annotations
 
@@ -112,6 +112,137 @@ def _check_profile(c, headers) -> None:
           f"events={len(again.get('events') or [])} vectors={len(again.get('vectors') or [])}")
 
 
+_EXPECTED_TABLES = {
+    "users", "user_identities", "consents", "audit_logs",
+    "signal_ingest", "signal_outbox", "signal_dlq",
+    "profile_events", "schema_meta",
+    "invitations", "invitation_redemptions", "tenant_audience_policies",
+}
+
+
+def _check_invitation(c, headers) -> None:
+    """终端邀请：opaque handle，兑换不另签会话。"""
+    issued = c.post("/v1/invitations", headers=headers, json={"idempotency_key": "smoke-issue"})
+    body = issued.get_json() or {}
+    invitation = body.get("invitation") or {}
+    invitation_id = invitation.get("id") or ""
+    check("issue 201",
+          issued.status_code == 201 and bool(invitation_id) and body.get("duplicate") is False,
+          f"status={issued.status_code}")
+
+    inspected = c.get(f"/v1/invitations/{invitation_id}", headers=headers)
+    inspected_body = inspected.get_json() or {}
+    inspected_invitation = inspected_body.get("invitation") or {}
+    check("inspect 200 且不暴露 issuer",
+          inspected.status_code == 200
+          and inspected_invitation.get("id") == invitation_id
+          and "issuer" not in inspected_invitation,
+          f"status={inspected.status_code}")
+
+    prepared = c.post(f"/v1/invitations/{invitation_id}/prepare-redemption", headers=headers, json={})
+    prepared_body = prepared.get_json() or {}
+    check("prepare 200 且不兑换",
+          prepared.status_code == 200
+          and prepared_body.get("consumes_invitation") is False
+          and prepared_body.get("challenge") is None,
+          f"status={prepared.status_code}")
+
+    redeem_body = {
+        "idempotency_key": "smoke-redeem",
+        "audience": "genzer.terminal.registration",
+        "purpose": "account_registration",
+    }
+    redeemed = c.post(f"/v1/invitations/{invitation_id}/redeem", headers=headers, json=redeem_body)
+    redeemed_body = redeemed.get_json() or {}
+    check("redeem 200 且不签发会话",
+          redeemed.status_code == 200
+          and redeemed_body.get("duplicate") is False
+          and redeemed_body.get("redemption_count") == 1
+          and "access_token" not in redeemed_body,
+          f"status={redeemed.status_code} count={redeemed_body.get('redemption_count')}")
+
+    again = c.post(f"/v1/invitations/{invitation_id}/redeem", headers=headers, json=redeem_body)
+    again_body = again.get_json() or {}
+    check("重复 redeem 为 duplicate 且次数不变",
+          again.status_code == 200
+          and again_body.get("duplicate") is True
+          and again_body.get("redemption_count") == 1,
+          f"status={again.status_code} count={again_body.get('redemption_count')}")
+
+    expired_issue = c.post("/v1/invitations", headers=headers, json={"idempotency_key": "smoke-expire"})
+    expired_id = ((expired_issue.get_json() or {}).get("invitation") or {}).get("id")
+    conn = sqlite3.connect(_DB)
+    conn.execute(
+        "UPDATE invitations SET expires_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", expired_id),
+    )
+    conn.commit()
+    conn.close()
+    expired = c.post(
+        f"/v1/invitations/{expired_id}/redeem",
+        headers=headers,
+        json={"idempotency_key": "smoke-expire-redeem",
+              "audience": "genzer.terminal.registration",
+              "purpose": "account_registration"},
+    )
+    check("过期 redeem 410", expired.status_code == 410, f"status={expired.status_code}")
+
+    revoked_issue = c.post("/v1/invitations", headers=headers, json={"idempotency_key": "smoke-revoke"})
+    revoked_id = ((revoked_issue.get_json() or {}).get("invitation") or {}).get("id")
+    revoked = c.post(f"/v1/invitations/{revoked_id}/revoke", headers=headers, json={})
+    revoked_redeem = c.post(
+        f"/v1/invitations/{revoked_id}/redeem",
+        headers=headers,
+        json={"idempotency_key": "smoke-revoke-redeem",
+              "audience": "genzer.terminal.registration",
+              "purpose": "account_registration"},
+    )
+    check("吊销后 redeem 409",
+          revoked.status_code == 200 and revoked_redeem.status_code == 409,
+          f"revoke={revoked.status_code} redeem={revoked_redeem.status_code}")
+
+    mismatch = c.post(
+        f"/v1/invitations/{invitation_id}/redeem",
+        headers=headers,
+        json={"idempotency_key": "smoke-mismatch", "audience": "other.audience",
+              "purpose": "account_registration"},
+    )
+    check("audience 不匹配 422", mismatch.status_code == 422, f"status={mismatch.status_code}")
+
+    naked = c.get(f"/v1/invitations/{invitation_id}")
+    denied = c.post("/v1/invitations", headers=headers, json={
+        "idempotency_key": "smoke-denied",
+        "tenant": "genzer.terminal",
+        "audience": "gfcc.circle",
+        "purpose": "circle_admission",
+    })
+    check("未认证 401，未登记策略 403",
+          naked.status_code == 401 and denied.status_code == 403,
+          f"naked={naked.status_code} denied={denied.status_code}")
+
+    conn = sqlite3.connect(_DB)
+    chunks = []
+    for table in ("invitations", "invitation_redemptions", "tenant_audience_policies"):
+        for row in conn.execute(f"SELECT * FROM {table}"):
+            chunks.append(" ".join("" if value is None else str(value) for value in row))
+    actions = set()
+    resource_ids = []
+    for action, resource_id, metadata in conn.execute(
+        "SELECT action, resource_id, metadata FROM audit_logs WHERE resource_type = 'invitation'"
+    ):
+        actions.add(action)
+        resource_ids.append(resource_id or "")
+        chunks.append(metadata or "")
+    conn.close()
+    check("邀请账本与审计无明文邮箱", "smoke@core.local" not in "\n".join(chunks))
+    check("邀请审计五类动作都在，且 resource_id 只留前 12 位",
+          {"invitation.issue", "invitation.inspect", "invitation.prepare_redemption",
+           "invitation.redeem", "invitation.revoke"} <= actions
+          and bool(resource_ids)
+          and all(0 < len(item) <= 12 for item in resource_ids),
+          f"actions={sorted(actions)}")
+
+
 def main() -> int:
     print("thomas-core 独立仓自检")
     print(f"  backend={BACKEND}")
@@ -140,6 +271,12 @@ def main() -> int:
           f"status={r.status_code} service={body.get('service')}")
     check("health chroma_ok 是布尔值", isinstance(body.get("chroma_ok"), bool),
           f"chroma_ok={body.get('chroma_ok')}")
+    secret = os.environ.get("ETHOS_AUTH_SECRET", "")
+    health_text = r.get_data(as_text=True)
+    check("bridge_configured 是布尔值且不回显密钥",
+          isinstance(body.get("bridge_configured"), bool)
+          and (not secret or secret not in health_text),
+          f"bridge_configured={body.get('bridge_configured')}")
 
     email = "smoke@core.local"
     r_reg = c.post("/v1/auth/register",
@@ -156,14 +293,16 @@ def main() -> int:
     check("consent 200", r_consent.status_code == 200, f"status={r_consent.status_code}")
 
     conn = sqlite3.connect(_DB)
-    n_tables = conn.execute(
-        "select count(*) from sqlite_master where type='table' and name not like 'sqlite_%'"
-    ).fetchone()[0]
-    scopes = [x[0] for x in conn.execute("select distinct scope from schema_meta")]
+    names = {row[0] for row in conn.execute(
+        "select name from sqlite_master where type='table' and name not like 'sqlite_%'"
+    )}
+    scopes = [row[0] for row in conn.execute("select distinct scope from schema_meta")]
     conn.close()
-    check("9 表 + schema_meta 有 core/profile",
-          n_tables == 9 and "core" in scopes and "profile" in scopes,
-          f"tables={n_tables} scopes={scopes}")
+    check("12 表集合 + schema_meta 有 core/profile",
+          names == _EXPECTED_TABLES and "core" in scopes and "profile" in scopes,
+          f"extra={sorted(names - _EXPECTED_TABLES)} missing={sorted(_EXPECTED_TABLES - names)} scopes={scopes}")
+
+    _check_invitation(c, headers)
 
     # ask 未注册 brain：应失败而非静默空答案
     r_ask = c.post("/v1/ask", json={"query": "介绍一下 THOMAS 架构的底座"}, headers=headers)

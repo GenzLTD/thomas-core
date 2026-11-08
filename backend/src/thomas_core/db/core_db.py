@@ -83,10 +83,20 @@ class CoreDB:
         """
         if include_product is None:
             include_product = not schema_loader.split_enabled()
-        info = schema_loader.ensure_scope(self.db_path, "core")
-        schema_loader.ensure_scope(self.db_path, "profile")
+
+        def _ensure(scope: str) -> dict:
+            try:
+                return schema_loader.ensure_scope(self.db_path, scope)
+            except schema_loader.SchemaDriftError as exc:
+                # 幂等 DDL 已经写入，schema_meta 也已改到新版本，然后才抛。
+                # 已有库第一次请求若把这个异常冒出去，/health 会 500，部署轮询可能判回滚。
+                logger.warning("[core] schema drift already applied scope=%s: %s", scope, exc)
+                return {"scope": scope, "drift": True, "applied": True}
+
+        info = _ensure("core")
+        _ensure("profile")
         if include_product:
-            schema_loader.ensure_scope(self.db_path, "product")
+            _ensure("product")
         return info
 
     @contextmanager
@@ -411,3 +421,102 @@ class CoreDB:
                 (user_id,),
             ).fetchone()
         return row[0] if row else None
+
+    def open_immediate(self):
+        """独占写事务。邀请的兑换和吊销必须抢到锁再读状态。"""
+        conn = self._connect()
+        conn.commit()
+        conn.isolation_level = None
+        conn.execute("BEGIN IMMEDIATE")
+        return conn
+
+    def finish_immediate(self, conn, *, commit: bool) -> None:
+        try:
+            if commit:
+                conn.commit()
+            else:
+                conn.rollback()
+        finally:
+            conn.close()
+
+    def get_audience_policy(self, conn, tenant: str, audience: str, purpose: str):
+        """只按租户、受众、用途查一条策略。没有列表接口。"""
+        row = conn.execute(
+            """SELECT tenant, audience, purpose, issue_allowed, device_policy
+               FROM tenant_audience_policies
+               WHERE tenant = ? AND audience = ? AND purpose = ?""",
+            (tenant, audience, purpose),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def find_invitation(self, conn, invitation_id: str):
+        row = conn.execute(
+            "SELECT * FROM invitations WHERE id = ?",
+            (invitation_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def find_invitation_by_idempotency(self, conn, idempotency_key: str):
+        row = conn.execute(
+            "SELECT * FROM invitations WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def find_redemption_by_idempotency(self, conn, idempotency_key: str):
+        row = conn.execute(
+            "SELECT * FROM invitation_redemptions WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def find_redemption_for_principal(self, conn, invitation_id: str, redeemer_sub: str):
+        row = conn.execute(
+            """SELECT * FROM invitation_redemptions
+               WHERE invitation_id = ? AND redeemer_sub = ?""",
+            (invitation_id, redeemer_sub),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def count_redemptions(self, conn, invitation_id: str) -> int:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM invitation_redemptions WHERE invitation_id = ?",
+            (invitation_id,),
+        ).fetchone()
+        return int(row[0])
+
+    def insert_invitation(self, conn, row: dict) -> None:
+        conn.execute(
+            """INSERT INTO invitations (
+                   id, tenant, audience, purpose, issuer_sub, recipient_sub, status,
+                   max_redemptions, redemption_count, device_policy, extensions_json,
+                   idempotency_key, issued_at, expires_at
+               ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?, ?)""",
+            (
+                row["id"], row["tenant"], row["audience"], row["purpose"],
+                row["issuer_sub"], row["recipient_sub"], row["max_redemptions"],
+                row["device_policy"], row["extensions_json"], row["idempotency_key"],
+                row["issued_at"], row["expires_at"],
+            ),
+        )
+
+    def insert_redemption(self, conn, row: dict) -> None:
+        conn.execute(
+            """INSERT INTO invitation_redemptions (
+                   id, invitation_id, audience, purpose, redeemer_sub,
+                   device_verification_json, idempotency_key, redeemed_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row["id"], row["invitation_id"], row["audience"], row["purpose"],
+                row["redeemer_sub"], row["device_verification_json"],
+                row["idempotency_key"], row["redeemed_at"],
+            ),
+        )
+
+    def update_invitation_state(self, conn, invitation_id: str, *, status: str, redemption_count: int) -> None:
+        conn.execute(
+            """UPDATE invitations
+               SET status = ?, redemption_count = ?, updated_at = datetime('now')
+               WHERE id = ?""",
+            (status, redemption_count, invitation_id),
+        )

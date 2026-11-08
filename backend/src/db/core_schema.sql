@@ -121,3 +121,53 @@ FOR EACH ROW WHEN NEW.role IS NOT NULL
 BEGIN
     SELECT RAISE(ABORT, 'users.role must be one of: user enterprise admin driver');
 END;
+
+-- invitation.v1，not_required。opaque handle 不编码身份。策略只登记允许签发的组合。
+CREATE TABLE IF NOT EXISTS invitations (
+    id                TEXT PRIMARY KEY,
+    tenant            TEXT NOT NULL,
+    audience          TEXT NOT NULL,
+    purpose           TEXT NOT NULL,
+    issuer_sub        TEXT NOT NULL,
+    recipient_sub     TEXT,
+    status            TEXT NOT NULL DEFAULT 'active',
+    max_redemptions   INTEGER NOT NULL DEFAULT 1,
+    redemption_count  INTEGER NOT NULL DEFAULT 0,
+    device_policy     TEXT NOT NULL DEFAULT 'not_required',
+    extensions_json   TEXT NOT NULL DEFAULT '{}',
+    idempotency_key   TEXT NOT NULL UNIQUE,
+    issued_at         TEXT NOT NULL,
+    expires_at        TEXT NOT NULL,
+    created_at        TEXT DEFAULT (datetime('now')),
+    updated_at        TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_invitations_tenant_audience
+    ON invitations(tenant, audience, status);
+
+CREATE TABLE IF NOT EXISTS invitation_redemptions (
+    id                       TEXT PRIMARY KEY,
+    invitation_id            TEXT NOT NULL,
+    audience                 TEXT NOT NULL,
+    purpose                  TEXT NOT NULL,
+    redeemer_sub             TEXT NOT NULL,
+    device_verification_json TEXT NOT NULL DEFAULT '{}',
+    idempotency_key          TEXT NOT NULL UNIQUE,
+    redeemed_at              TEXT NOT NULL,
+    FOREIGN KEY (invitation_id) REFERENCES invitations(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_redemptions_invite_redeemer
+    ON invitation_redemptions(invitation_id, redeemer_sub);
+
+CREATE TABLE IF NOT EXISTS tenant_audience_policies (
+    tenant        TEXT NOT NULL,
+    audience      TEXT NOT NULL,
+    purpose       TEXT NOT NULL,
+    issue_allowed INTEGER NOT NULL DEFAULT 0,
+    device_policy TEXT NOT NULL DEFAULT 'not_required',
+    PRIMARY KEY (tenant, audience, purpose)
+);
+
+INSERT OR IGNORE INTO tenant_audience_policies
+    (tenant, audience, purpose, issue_allowed, device_policy)
+VALUES
+    ('genzer.terminal', 'genzer.terminal.registration', 'account_registration', 1, 'not_required');
