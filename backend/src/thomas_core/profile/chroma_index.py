@@ -10,7 +10,16 @@ logger = logging.getLogger("looma.profile.chroma")
 
 COLLECTION = "profile_context"
 _REQUIRED = ("user_id", "domain", "consent_scope")
+_ONNX_FILES = (
+    "config.json",
+    "model.onnx",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "tokenizer.json",
+    "vocab.txt",
+)
 _clients: dict[str, object] = {}
+_onnx_skip_logged = False
 
 
 class DeterministicEmbedding:
@@ -63,9 +72,25 @@ def _client(path: Path):
     return client
 
 
+def _onnx_dir() -> Path:
+    """与 chromadb ONNXMiniLM_L6_V2 相同的解压目录。"""
+    return Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2" / "onnx"
+
+
+def _onnx_cached() -> bool:
+    folder = _onnx_dir()
+    return all((folder / name).is_file() for name in _ONNX_FILES)
+
+
 def _embedding():
+    """onnx 只使用已经在磁盘上的模型。缺文件就改用确定性向量，不在请求线程里下载。"""
     mode = os.getenv("PROFILE_EMBED", "onnx").strip().lower() or "onnx"
     if mode == "deterministic":
+        return DeterministicEmbedding()
+    if mode != "onnx":
+        raise ValueError(f"unknown PROFILE_EMBED: {mode}")
+    if not _onnx_cached():
+        _note_onnx_skip()
         return DeterministicEmbedding()
     from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
@@ -85,6 +110,13 @@ def _require_metadata(metadata: dict) -> None:
     missing = [key for key in _REQUIRED if not str(metadata.get(key) or "").strip()]
     if missing:
         raise ValueError("chroma metadata missing: " + ",".join(missing))
+
+
+def _note_onnx_skip() -> None:
+    global _onnx_skip_logged
+    if not _onnx_skip_logged:
+        logger.warning("onnx model not cached; using deterministic embeddings")
+        _onnx_skip_logged = True
 
 
 def upsert_event(db_path: str, event_id: str, document: str, metadata: dict) -> bool:
