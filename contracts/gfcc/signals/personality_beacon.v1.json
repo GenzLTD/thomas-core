@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC personality_beacon signal payload v1",
+  "version": "1.1.0",
+  "description": "PlanetX assessment fact. Routed to identity port as auxiliary capability_trace. User-action origin only; no raw answers.",
+  "source": "planetx",
+  "route": "identity",
+  "type": "object",
+  "required": ["personality_type", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "personality_type": {
+      "type": "string",
+      "enum": [
+        "INTJ", "INTP", "ENTJ", "ENTP",
+        "INFJ", "INFP", "ENFJ", "ENFP",
+        "ISTJ", "ISFJ", "ESTJ", "ESFJ",
+        "ISTP", "ISFP", "ESTP", "ESFP"
+      ]
+    },
+    "traits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "score"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "score": { "type": "number" }
+        }
+      }
+    },
+    "assessment_score": { "type": "number" },
+    "source": {
+      "type": "string",
+      "const": "planetx"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

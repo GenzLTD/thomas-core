@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Circle Port v1",
+  "version": "1.6.0",
+  "port": "circle",
+  "description": "围坐 / 共同体容器. circle_id elsewhere is not an implicit string: this port owns create, join, leave, dissolve, and memory inheritance. Required in default mode.",
+  "not": [
+    "a chat room product",
+    "silent delete of seven-library history on dissolve"
+  ],
+  "status_enum": ["forming", "active", "paused", "dissolved"],
+  "record": {
+    "type": "object",
+    "required": ["id", "name", "status", "created_by", "created_at"],
+    "properties": {
+      "id": { "type": "string" },
+      "name": { "type": "string", "minLength": 1 },
+      "parent_id": {
+        "type": ["string", "null"],
+        "description": "Optional parent circle. Nested 围坐."
+      },
+      "members": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["sub"],
+          "properties": {
+            "sub": { "type": "string" },
+            "role": { "$ref": "roles.v1.json#/role_enum" },
+            "builder_tags": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "collaboration",
+                  "project_enablement",
+                  "local_connection",
+                  "sustained_operation"
+                ]
+              }
+            },
+            "joined_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "status": {
+        "enum": ["forming", "active", "paused", "dissolved"]
+      },
+      "created_by": { "type": "string" },
+      "created_at": { "type": "string", "format": "date-time" },
+      "dissolved_at": { "type": ["string", "null"], "format": "date-time" }
+    }
+  },
+  "operations": {
+    "create": { "scope": "circle.create", "min_role": "proposer" },
+    "join": { "scope": "circle.join", "min_role": "participant" },
+    "leave": { "scope": "circle.leave", "min_role": "participant" },
+    "get": { "scope": "circle.read", "min_role": "observer" },
+    "pause": { "scope": "circle.pause", "min_role": "organizer" },
+    "dissolve": {
+      "scope": "circle.dissolve",
+      "min_role": "organizer",
+      "notes": "Status becomes dissolved. Memory, consensus, and contribution records keep circle_id. No silent delete."
+    }
+  },
+  "invariants": [
+    "Dissolve does not delete Dual records",
+    "Membership is explicit; circle_id on other ports must resolve to this record",
+    "AI is not a voting member of a circle"
+  ]
+}

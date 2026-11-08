@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Identity Port v1 (PPI)",
+  "version": "1.6.0",
+  "port": "identity",
+  "description": "Personal-public identity for 格契. Values, capability trace, commitments, builder tags, and human-chosen value axes. Role = growth stage (能不能); builder_tags = craft (擅长做什么). uid is ethos Principal.sub. Paid tier is quota only.",
+  "not": [
+    "a billing plan",
+    "a resume inbox",
+    "an MBTI product surface",
+    "self-minted capability",
+    "a job-match scorecard"
+  ],
+  "principal": {
+    "uid": "sub",
+    "roles": "see roles.v1.json (growth ladder in JWT claims)",
+    "tier": "ethos free|basic|pro|admin — quota/bypass only"
+  },
+  "interim_auth": {
+    "verifier": "zervi-auth",
+    "uid": "sub",
+    "claims": ["sub", "role", "name", "phone"],
+    "role": "市场角色（candidate / recruiter / admin）。本版不改为 roles[]。",
+    "notes": "过渡。八角梯仍以 roles.v1.json 为准，留待 ethos 那一版进入 claims。"
+  },
+  "builder_tags": {
+    "type": "array",
+    "items": {
+      "enum": [
+        "collaboration",
+        "project_enablement",
+        "local_connection",
+        "sustained_operation"
+      ]
+    },
+    "zh": {
+      "collaboration": "协作推进",
+      "project_enablement": "赋能项目",
+      "local_connection": "在地连接",
+      "sustained_operation": "持续运营"
+    },
+    "description": "营造师标签，可多选。与八角梯正交。"
+  },
+  "trace_sources": {
+    "whitelist": {
+      "contribution": "evidence",
+      "memory": "evidence",
+      "consensus": "evidence",
+      "circle": "evidence",
+      "job_match": "auxiliary",
+      "mbti": "auxiliary",
+      "ai_observed": "auxiliary"
+    },
+    "unlisted": "reject",
+    "notes": "evidence may mint capability_trace. auxiliary may annotate only. No 'optional' source."
+  },
+  "profile": {
+    "type": "object",
+    "required": ["sub"],
+    "properties": {
+      "sub": { "type": "string", "minLength": 1 },
+      "display_name": { "type": "string" },
+      "values": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Declared values; not a match score by itself"
+      },
+      "builder_tags": {
+        "type": "array",
+        "items": {
+          "enum": [
+            "collaboration",
+            "project_enablement",
+            "local_connection",
+            "sustained_operation"
+          ]
+        }
+      },
+      "capability_trace": {
+        "type": "array",
+        "description": "Evidence-backed skills/actions over time",
+        "items": {
+          "type": "object",
+          "required": ["label", "source_port", "observed_at"],
+          "properties": {
+            "label": { "type": "string" },
+            "source_port": {
+              "type": "string",
+              "enum": [
+                "contribution",
+                "memory",
+                "consensus",
+                "circle",
+                "job_match",
+                "mbti",
+                "ai_observed"
+              ]
+            },
+            "weight": {
+              "type": "string",
+              "enum": ["evidence", "auxiliary"]
+            },
+            "observed_at": { "type": "string", "format": "date-time" },
+            "superseded_at": { "type": ["string", "null"], "format": "date-time" }
+          }
+        }
+      },
+      "commitments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["text", "status"],
+          "properties": {
+            "id": { "type": "string" },
+            "text": { "type": "string" },
+            "status": {
+              "type": "string",
+              "enum": ["offered", "accepted", "fulfilled", "withdrawn"]
+            }
+          }
+        }
+      },
+      "role": { "$ref": "roles.v1.json#/role_enum" },
+      "role_evidence_ids": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Dual / CoCo record ids that justify the current ladder step. AI observation alone is not enough."
+      },
+      "value_axes": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Cumulative points from signal value_axis_choice only. survival=钱多, freedom=事少, belonging=离家近. Absent until the first human choice. Not a match score. The kernel returns this raw snapshot. Normalization stays in job_match and is not written back. These integers are not comparable across users. job_match may read this object and must not write it.",
+        "properties": {
+          "survival": { "type": "integer", "minimum": 0 },
+          "freedom": { "type": "integer", "minimum": 0 },
+          "belonging": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "operations": {
+    "get_profile": {
+      "scope": "identity.read",
+      "min_role": "observer"
+    },
+    "upsert_profile": {
+      "scope": "identity.write",
+      "min_role": "participant",
+      "notes": "Self-write of values/commitments/builder_tags. Role changes go through roles.v1 transitions. Humans do not self-mint capability_trace. This operation does not write value_axes."
+    },
+    "append_trace": {
+      "scope": "identity.trace.write",
+      "min_role": "system",
+      "notes": "Only evidence-weight sources may mint capability. Auxiliary (job_match/mbti/ai_observed) annotates. contribution.fulfilled is the primary mint path. This operation does not write value_axes."
+    },
+    "read_value_axes": {
+      "scope": "identity.value_axes.read",
+      "callers": ["job_match", "planetx", "system"],
+      "notes": "Returns the raw snapshot. A second read does not change it. identity.read does not grant this scope."
+    },
+    "apply_value_axis": {
+      "scope": "identity.value_axes.write",
+      "callers": ["planetx", "system"],
+      "notes": "Only signal value_axis_choice may add 1–5 points to the choice's own axis. Domain default axis is not a writer. job_match must not call this. identity.write does not grant this scope."
+    }
+  },
+  "optional_plugins": {
+    "career_trace": "JobFirst resume/job_match may feed capability_trace as auxiliary and must read value_axes when present. Job scores stay job-scoped and are not identity itself.",
+    "personality": "MBTI-like input may annotate values as auxiliary; not an entry port"
+  }
+}

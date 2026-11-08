@@ -1,0 +1,42 @@
+{
+  "layer": "L0-pin",
+  "authority": "GenzLTD/gfcc",
+  "unique_protocol_source": true,
+  "note": "本仓认的唯一协议真源。GenzLTD/gfcc 是写作汇合处；本钉让 thomas-core 指到当时生效的 Ask/五端口/信号/邀请。刷新 = 改 JSON + 改本文件 + 新提交。实现分叉不要求改契约。",
+  "repo": "https://github.com/GenzLTD/gfcc",
+  "commit": "1474d377bdd2a55c159ceb5948a9e311a8d6c0bd",
+  "pinned_at": "2026-11-08",
+  "families": {
+    "l0": {
+      "version": "1.6.0",
+      "files": [
+        "ask.envelope.v1.json",
+        "circle.v1.json",
+        "identity.v1.json",
+        "invitation.v1.json",
+        "job_match.v1.json",
+        "memory.v1.json",
+        "consensus.v1.json",
+        "contribution.v1.json",
+        "registry.v1.json",
+        "roles.v1.json"
+      ]
+    },
+    "signal": {
+      "version": "1.1.0",
+      "files": [
+        "signal.envelope.v1.json",
+        "signals/consensus_match.v1.json",
+        "signals/personality_beacon.v1.json",
+        "signals/value_axis_choice.v1.json"
+      ]
+    }
+  },
+  "kernel": {
+    "entry": "POST /v1/ask",
+    "health": "GET /health",
+    "signal_entry": "POST /v1/signal-ingest",
+    "default_adapter": "stub",
+    "implementation_example": "tatha"
+  }
+}

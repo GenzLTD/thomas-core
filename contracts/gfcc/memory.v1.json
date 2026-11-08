@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Memory Port v1 (Dual seven libraries)",
+  "version": "1.6.0",
+  "port": "memory",
+  "description": "Community memory semantics. Store slot is replaceable. Libraries are Dual seven, including methodology value (why), not only method (how). Humans and AI may observe; AI must not silently rewrite.",
+  "not": [
+    "a personal fact dump",
+    "a binding to DemoPeter or iii-engine",
+    "silent overwrite of prior state",
+    "AI as the author of community values without human supersede"
+  ],
+  "libraries": {
+    "issue": "议题",
+    "action": "行动",
+    "event": "事件",
+    "methodology_value": "方法论价值（原则、红线、判断依据；含 how 与 why）",
+    "person": "人",
+    "org": "组织",
+    "resource": "资源"
+  },
+  "library_enum": [
+    "issue",
+    "action",
+    "event",
+    "methodology_value",
+    "person",
+    "org",
+    "resource"
+  ],
+  "deprecated_aliases": {
+    "method": "methodology_value"
+  },
+  "record": {
+    "type": "object",
+    "required": ["library", "body", "observed_at"],
+    "properties": {
+      "id": { "type": "string" },
+      "library": {
+        "enum": [
+          "issue",
+          "action",
+          "event",
+          "methodology_value",
+          "person",
+          "org",
+          "resource"
+        ]
+      },
+      "record_type": {
+        "type": "string",
+        "enum": ["note", "method", "value"],
+        "description": "Within methodology_value: method = how; value = why (principles, red lines). Grids of 格契 invariants belong here as value."
+      },
+      "circle_id": { "type": "string" },
+      "body": { "type": "string", "minLength": 1 },
+      "refs": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Ids of related seven-library records. Reuse (被引用) is the vision success metric for 记得住."
+      },
+      "observed_at": { "type": "string", "format": "date-time" },
+      "observed_by": {
+        "type": "string",
+        "enum": ["human", "ai"]
+      },
+      "ai_source": {
+        "type": ["string", "null"],
+        "description": "Required when observed_by=ai. Which insight model/adapter produced the observation."
+      },
+      "superseded_at": { "type": ["string", "null"], "format": "date-time" },
+      "actor_sub": { "type": "string" }
+    }
+  },
+  "operations": {
+    "remember": {
+      "scope": "memory.write",
+      "min_role": "participant",
+      "invariants": [
+        "Must name a library",
+        "Must set observed_at",
+        "Must not delete history; supersede instead"
+      ]
+    },
+    "recall": {
+      "scope": "memory.read",
+      "min_role": "observer"
+    },
+    "observe": {
+      "scope": "memory.observe",
+      "min_role_human": "experimenter",
+      "min_role_ai": "system",
+      "observed_by": ["human", "ai"],
+      "description": "Mark a record as seen/used without mutating body. AI observation is evidence material, not a rewrite.",
+      "invariants": [
+        "AI observe requires ai_source",
+        "AI observe must not mutate body",
+        "Rewrites go through supersede by a human steward"
+      ]
+    },
+    "supersede": {
+      "scope": "memory.write",
+      "min_role": "steward",
+      "description": "Prior record keeps body; superseded_at is set. Old state is history. AI cannot supersede."
+    }
+  },
+  "store_slot": {
+    "interface": "ctx.store",
+    "required_methods": ["put", "get", "query", "supersede"],
+    "default_adapter": "stub",
+    "optional_adapters": ["sqlite", "mem0", "zep", "agentmemory_iii", "cortex-mcp", "gfcc"],
+    "link": "actor_sub",
+    "adapter_notes": {
+      "cortex-mcp": "终端侧记忆适配器",
+      "gfcc": "pgvector 库 gfcc。与 cortex-mcp 只通过 actor_sub 关联。"
+    }
+  },
+  "empty_on_boot": true
+}

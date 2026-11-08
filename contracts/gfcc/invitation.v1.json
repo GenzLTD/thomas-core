@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Invitation Federation Contract v1",
+  "version": "1.6.0",
+  "port": "invitation",
+  "description": "Federated invitation lifecycle. An invitation grants eligibility for one declared audience and purpose; it is not a user identity, an authentication credential, or a device credential.",
+  "non_goals": [
+    "a bearer login token",
+    "a device identity or device proof",
+    "a cross-product universal invite code",
+    "a PlanetX fleet invite unless that audience explicitly owns the invitation"
+  ],
+  "identity": {
+    "canonical_subject": "GFCC principal.sub",
+    "external_subject": {
+      "shape": ["issuer", "subject"],
+      "notes": "External account identifiers (including Supabase Auth UUIDs) are namespaced by issuer and mapped to canonical principal.sub by the trusted identity authority. A client-supplied UUID is never authoritative."
+    },
+    "issuer_binding": "The trusted service derives the namespaced external identity from its verified session and attaches canonical_sub only when the identity authority has established that mapping; it does not trust caller-provided identifiers.",
+    "redeemer_binding": "The trusted service derives the namespaced external identity from the verified redeemer session and resolves canonical_sub through the identity authority when a mapping exists."
+  },
+  "invitation": {
+    "type": "object",
+    "required": [
+      "id",
+      "audience",
+      "purpose",
+      "issuer",
+      "issued_at",
+      "expires_at",
+      "status",
+      "device_policy"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Stable opaque identifier for internal reference; it is not a bearer secret. Do not encode identity or authorization claims in it."
+      },
+      "audience": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The single service/product boundary allowed to validate and redeem this invitation, e.g. genzer.terminal.registration or gfcc.circle."
+      },
+      "purpose": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The specific action granted within the audience, e.g. account_registration or circle_admission. Purpose is not inferred from a query parameter."
+      },
+      "issuer": {
+        "$ref": "#/$defs/identity_reference"
+      },
+      "recipient": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/identity_reference"
+          }
+        ],
+        "description": "Optional recipient restriction. When absent, any otherwise eligible authenticated principal may redeem."
+      },
+      "issued_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "expires_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["active", "revoked", "expired", "exhausted"]
+      },
+      "max_redemptions": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1
+      },
+      "redemption_count": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0
+      },
+      "device_policy": {
+        "$ref": "#/$defs/device_policy"
+      },
+      "extensions": {
+        "type": "object",
+        "description": "Audience-specific non-authoritative metadata. It must not override identity, audience, purpose, expiry, or redemption policy."
+      }
+    },
+    "additionalProperties": false
+  },
+  "redemption": {
+    "type": "object",
+    "required": [
+      "invitation_id",
+      "audience",
+      "purpose",
+      "redeemer",
+      "redeemed_at",
+      "device_verification"
+    ],
+    "properties": {
+      "invitation_id": {
+        "type": "string"
+      },
+      "audience": {
+        "type": "string"
+      },
+      "purpose": {
+        "type": "string"
+      },
+      "redeemer": {
+        "$ref": "#/$defs/identity_reference"
+      },
+      "redeemed_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "device_verification": {
+        "$ref": "#/$defs/device_verification_result"
+      },
+      "idempotency_key": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Audience-scoped retry key. Repeating the same successful redemption by the same principal returns the original outcome and does not consume another redemption."
+      }
+    },
+    "additionalProperties": false
+  },
+  "device_proof_exchange": {
+    "challenge": {
+      "type": "object",
+      "required": [
+        "challenge_id",
+        "nonce",
+        "audience",
+        "principal_binding",
+        "purpose",
+        "invitation_id",
+        "expires_at"
+      ],
+      "properties": {
+        "challenge_id": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string",
+          "description": "Cryptographically random, single-use server challenge."
+        },
+        "audience": {
+          "type": "string"
+        },
+        "principal_binding": {
+          "type": "string",
+          "description": "Opaque server-side binding to the verified authenticated principal. Do not use a client-supplied UUID."
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "invitation_id": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "proof": {
+      "type": "object",
+      "required": ["challenge_id", "credential_id", "proof"],
+      "properties": {
+        "challenge_id": {
+          "type": "string"
+        },
+        "credential_id": {
+          "type": "string",
+          "description": "Identifier for lookup only; it is not proof of device possession."
+        },
+        "proof": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque device response verified by the device credential authority. Algorithm, encoding, and hardware-attestation profile are intentionally deferred until the wearable is specified."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "operations": {
+    "issue": {
+      "authentication": "required",
+      "issuer_subject_source": "verified_session",
+      "notes": "The issuing service derives the issuer principal from its verified session. The caller cannot select issuer sub, audience, or purpose outside its authorized policy."
+    },
+    "inspect": {
+      "authentication": "required_before_account-bound_actions",
+      "consumes_invitation": false,
+      "notes": "Any pre-authentication preview is limited to generic validity guidance and must not expose issuer identity or private account data."
+    },
+    "prepare_redemption": {
+      "authentication": "required",
+      "notes": "Verify the caller session and derive its namespaced external identity; resolve canonical principal.sub when an identity mapping exists. If device_policy.mode is registered_credential_required, issue a short-lived single-use challenge bound to invitation, audience, purpose, and authenticated principal. Do not redeem yet."
+    },
+    "redeem": {
+      "authentication": "required",
+      "authenticated_subject_source": "verified_session",
+      "device_proof": "required only when invitation.device_policy.mode is registered_credential_required",
+      "atomic_checks": [
+        "invitation exists and belongs to the requested audience and purpose",
+        "invitation is active, unexpired, and below max_redemptions",
+        "recipient restriction matches the verified principal when present",
+        "device proof is valid when required and the challenge is unused and unexpired",
+        "redemption is recorded against the verified redeemer principal"
+      ],
+      "notes": "Consume the invitation and record redemption in one atomic operation. Never mint or exchange a session for the issuer's subject. An invitation only grants its declared eligibility; authentication remains the redeemer's own session."
+    },
+    "revoke": {
+      "authentication": "required",
+      "notes": "The issuer may revoke an unredeemed invitation within policy. Revocation and redemption must serialize so only one terminal state wins."
+    }
+  },
+  "device_policy": {
+    "modes": ["not_required", "registered_credential_required"],
+    "current_pwa": "not_required",
+    "future_wearable": "registered_credential_required may be selected after device enrollment and proof requirements are specified.",
+    "failure": "If device proof is required and unavailable or invalid, redemption fails closed; the service must not silently downgrade the policy.",
+    "uuid_rule": "A device UUID or credential_id is a lookup hint only. Device authentication requires verification of a challenge-bound proof from a registered credential."
+  },
+  "transport": {
+    "terminal_invite": {
+      "parameter": "terminal_invite",
+      "value": "Short-lived, single-use opaque handoff handle. It is not a Supabase UUID, raw reusable invite code, or login credential.",
+      "flow": [
+        "Open the public landing page with the opaque handle.",
+        "Authenticate the redeemer with the terminal identity provider.",
+        "POST the handle over TLS to the terminal invitation authority.",
+        "Verify the authenticated session, resolve its namespaced subject, then atomically redeem."
+      ],
+      "security": [
+        "Possession of the handoff handle alone grants no session or account access.",
+        "Do not place raw reusable invitation secrets, user UUIDs, or device identifiers in URLs.",
+        "Redact handoff handles from access logs, analytics, and referrer propagation."
+      ]
+    }
+  },
+  "external_parameters": {
+    "terminal_invite": {
+      "meaning": "Invitation handle for the Genzer Terminal registration audience.",
+      "transport_parameter": "terminal_invite",
+      "transport_value": "Short-lived opaque handoff handle as defined in transport.terminal_invite.",
+      "validation_owner": "Genzer Terminal invitation authority",
+      "may_be_forwarded_by_planetx": "Only as opaque data when the product's cross-product transfer policy explicitly allows it; PlanetX must not validate, redeem, or reinterpret it. Never place it in the legacy PlanetX join parameter."
+    },
+    "fleet_invite": {
+      "meaning": "PlanetX fleet-membership invitation.",
+      "validation_owner": "PlanetX fleet authority",
+      "legacy_transport_parameter": "join",
+      "rule": "Must not be interpreted as terminal_invite."
+    },
+    "ref": {
+      "meaning": "Attribution source only.",
+      "rule": "Must never authorize, authenticate, identify a principal, or substitute for either invitation."
+    },
+    "region": {
+      "meaning": "Billing/display region only.",
+      "rule": "Must never affect authentication, identity mapping, device verification, or invitation eligibility."
+    }
+  },
+  "invariants": [
+    "Canonical GFCC identity is principal.sub; external identities are namespaced by issuer and mapped by a trusted identity authority.",
+    "Client-supplied user UUIDs, device UUIDs, ref values, and invitation handles are not authentication proof.",
+    "An invitation is scoped to exactly one audience and purpose; codes from different invitation authorities are never interchangeable.",
+    "The authenticated redeemer is derived from a verified session and is the subject recorded by redemption.",
+    "Invitation validation/preview does not consume an invitation; successful redemption is atomic and retry-safe.",
+    "Device proof is independent from user authentication and invitation eligibility.",
+    "Current PWA flows do not claim hardware-backed or wearable-device authentication.",
+    "Legacy circle redemption that issues a session for the invitation issuer is not conformant to this contract and must not be used as a cross-product registration flow."
+  ],
+  "migration": {
+    "legacy_circle_redeem": "The existing GFCC circle redemption implementation issues a session for the invitation-bound subject. It is legacy behavior and is not conformant to this contract's authenticated-redeemer binding. Migrating that flow requires a separate implementation change and rollout plan."
+  },
+  "$defs": {
+    "principal_reference": {
+      "type": "object",
+      "required": ["sub"],
+      "properties": {
+        "sub": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Canonical GFCC principal subject."
+        }
+      },
+      "additionalProperties": false
+    },
+    "external_identity_reference": {
+      "type": "object",
+      "required": ["issuer", "subject"],
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "format": "uri",
+          "description": "Trusted identity provider identifier, e.g. the configured Supabase Auth issuer."
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Subject obtained from a verified provider session, never trusted from a request body."
+        },
+        "canonical_sub": {
+          "type": ["string", "null"],
+          "description": "Trusted identity-authority mapping to GFCC principal.sub, when established."
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity_reference": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/principal_reference"
+        },
+        {
+          "$ref": "#/$defs/external_identity_reference"
+        }
+      ]
+    },
+    "device_policy": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["not_required", "registered_credential_required"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "device_verification_result": {
+      "type": "object",
+      "required": ["required", "verified"],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "credential_id": {
+          "type": ["string", "null"],
+          "description": "Audit reference only; not a device proof."
+        },
+        "assurance_profile": {
+          "type": ["string", "null"],
+          "description": "Optional verifier-defined assurance label. Values are deferred until the wearable and trust chain are specified."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

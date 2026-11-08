@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Community Role Ladder v1",
+  "version": "1.6.0",
+  "description": "Eight-step growth ladder in ethos Principal.roles / permissions. Not eight microservices. Orthogonal to identity.builder_tags (craft). Admin flag is an ops exception, not the long-term promotion mechanism.",
+  "home": "ethos JWT claims",
+  "orthogonal_to": "identity.builder_tags",
+  "ladder_logic": "旁观能看见 → 参与能动手 → 尝试能观察沉淀 → 提议能把想法变成可评议文本 → 主理能主持一件事运转 → 组织能协调多方 → 行动能把已共识的事做完 → 提案能动共同体规则。proposer（提议）是把事放上桌；petitioner（提案）是改桌子本身的规则。",
+  "role_enum": [
+    "observer",
+    "participant",
+    "experimenter",
+    "proposer",
+    "steward",
+    "organizer",
+    "actor",
+    "petitioner"
+  ],
+  "ladder": [
+    {
+      "id": "observer",
+      "zh": "旁观",
+      "ladder_logic": "能看见围坐、记忆与共议，不写入。",
+      "permissions": [
+        "identity.read",
+        "memory.read",
+        "consensus.read",
+        "circle.read"
+      ]
+    },
+    {
+      "id": "participant",
+      "zh": "参与",
+      "includes": "observer",
+      "ladder_logic": "能加入围坐、写下记忆与承诺、认定贡献、对人的共议点确认。",
+      "permissions": [
+        "identity.write",
+        "memory.write",
+        "consensus.ack",
+        "consensus.reject",
+        "consensus.withdraw",
+        "contribution.attest",
+        "contribution.appeal",
+        "circle.join",
+        "circle.leave"
+      ]
+    },
+    {
+      "id": "experimenter",
+      "zh": "尝试",
+      "includes": "participant",
+      "ladder_logic": "能把观察标进七库（人观察）；开始留下可复用的痕迹。",
+      "permissions": ["memory.observe"]
+    },
+    {
+      "id": "proposer",
+      "zh": "提议",
+      "includes": "experimenter",
+      "ladder_logic": "能把想法写成可评议的提议，并能发起一个围坐。不是改共同体规则（那是 petitioner）。",
+      "permissions": ["consensus.propose", "circle.create"]
+    },
+    {
+      "id": "steward",
+      "zh": "主理",
+      "includes": "proposer",
+      "ladder_logic": "能主持一件事的运转：记忆 supersede、贡献兑现。",
+      "permissions": ["memory.write", "contribution.fulfill"]
+    },
+    {
+      "id": "organizer",
+      "zh": "组织",
+      "includes": "steward",
+      "ladder_logic": "能组织多方协作：裁定申诉、暂停或解散围坐。",
+      "permissions": [
+        "contribution.appeal.resolve",
+        "circle.pause",
+        "circle.dissolve"
+      ]
+    },
+    {
+      "id": "actor",
+      "zh": "行动",
+      "includes": "organizer",
+      "ladder_logic": "能牵头把已 verified 的共识变成行动（落地，而不是再开一轮空议）。",
+      "permissions": []
+    },
+    {
+      "id": "petitioner",
+      "zh": "提案",
+      "includes": "actor",
+      "ladder_logic": "能提出改变共同体规则的提案（改桌子，不是往桌上放一道菜）。",
+      "permissions": []
+    }
+  ],
+  "transitions": {
+    "driven_by": [
+      "memory records",
+      "contribution fulfillments",
+      "consensus_verified",
+      "ai_observed（辅助证据，单独不足以上升）"
+    ],
+    "not_driven_by_long_term": ["admin toggle only"],
+    "ops_exception": "admin/system may set roles for repair; must audit as admin.role.set"
+  },
+  "deny_by_default": true,
+  "scope_unlisted": "reject",
+  "service_scopes": {
+    "planetx": ["identity.value_axes.read", "identity.value_axes.write"],
+    "system": ["identity.value_axes.read", "identity.value_axes.write"],
+    "job_match": ["identity.value_axes.read"]
+  },
+  "value_axes_rule": "identity.write does not include identity.value_axes.write. Only planetx and system may write. job_match may read the raw snapshot and must not write it back."
+}

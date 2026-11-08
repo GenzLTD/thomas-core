@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC job_match scorecard v1",
+  "version": "1.6.0",
+  "weight": "auxiliary",
+  "writes_to": "none",
+  "must_read": "identity.value_axes",
+  "must_not_write": ["identity.value_axes", "identity.values"],
+  "read_scope": "identity.value_axes.read",
+  "description": "Job-scoped scores. The kernel returns the raw value_axes snapshot. Normalization stays here and is not written back. value_axes are not comparable across users. Changing a clamp without changing this file is a contract break.",
+  "axis_reading": {
+    "survival": "salary_match",
+    "freedom": "culture_workload_match",
+    "belonging": "location_match"
+  },
+  "scores": {
+    "overall": { "min": 0, "max": 100, "default": 50 },
+    "background_match": { "min": 0, "max": 10, "default": 5 },
+    "skills_overlap": { "min": 0, "max": 30, "default": 15 },
+    "experience_relevance": { "min": 0, "max": 30, "default": 15 },
+    "seniority": { "min": 0, "max": 10, "default": 5 },
+    "language_requirement": { "min": 0, "max": 10, "default": 5 },
+    "company_score": { "min": 0, "max": 10, "default": 5 },
+    "salary_match": { "min": 0, "max": 10, "default": 5 },
+    "location_match": { "min": 0, "max": 10, "default": 5 },
+    "culture_workload_match": { "min": 0, "max": 10, "default": 5 }
+  }
+}

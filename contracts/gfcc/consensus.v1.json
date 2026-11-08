@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Consensus Port v1",
+  "version": "1.6.0",
+  "port": "consensus",
+  "description": "Deliberation for 格契. Success is threshold AND bidirectional human acknowledge. Score without evidence is invalid. AI may contribute observation to score_evidence; parties who ack must be human. Having a scored result is not success. rejected/withdrawn are additive statuses (2026-08-30 D-series): a party may void the current sentence with a reason, or the proposer may withdraw; neither steals the floor.",
+  "not": [
+    "job matching",
+    "dating match",
+    "single-click confirm after a scan",
+    "unexplained scores",
+    "AI acknowledging as a party",
+    "Loomio-style block that forces reconsideration"
+  ],
+  "threshold": {
+    "name": "CONSENSUS_THRESHOLD",
+    "default": 85,
+    "minimum": 0,
+    "maximum": 100,
+    "overridable": true,
+    "notes": "Scoring formula is circle-defined (e.g. reputation × contribution). This contract requires evidence traceability, not a hardcoded algorithm."
+  },
+  "status_enum": [
+    "proposed",
+    "scored",
+    "below_threshold",
+    "consensus_passed",
+    "awaiting_ack",
+    "consensus_verified",
+    "expired",
+    "failed",
+    "rejected",
+    "withdrawn"
+  ],
+  "proposal": {
+    "type": "object",
+    "required": ["circle_id", "subject", "parties"],
+    "properties": {
+      "id": { "type": "string" },
+      "circle_id": { "type": "string" },
+      "subject": { "type": "string" },
+      "issue_id": { "type": ["string", "null"], "description": "Optional Dual memory.issue id" },
+      "parties": {
+        "type": "array",
+        "minItems": 2,
+        "items": { "type": "string", "description": "Human Principal.sub. AI is not a party." }
+      },
+      "score": { "type": ["number", "null"] },
+      "score_evidence": {
+        "type": "array",
+        "description": "Required before status can leave proposed. Empty evidence ⇒ score is invalid.",
+        "items": {
+          "type": "object",
+          "required": ["by_sub", "basis", "at"],
+          "properties": {
+            "by_sub": { "type": "string" },
+            "observed_by": { "enum": ["human", "ai"] },
+            "basis": {
+              "type": "string",
+              "description": "Why this score. May cite memory / contribution / ai observation ids."
+            },
+            "refs": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "status": {
+        "enum": [
+          "proposed",
+          "scored",
+          "below_threshold",
+          "consensus_passed",
+          "awaiting_ack",
+          "consensus_verified",
+          "expired",
+          "failed",
+          "rejected",
+          "withdrawn"
+        ]
+      },
+      "acks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["sub", "at"],
+          "properties": {
+            "sub": { "type": "string" },
+            "at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "rejected_by": { "type": ["string", "null"] },
+      "reject_reason": { "type": ["string", "null"] },
+      "rejected_at": { "type": ["string", "null"], "format": "date-time" },
+      "withdrawn_by": { "type": ["string", "null"] },
+      "withdrawn_at": { "type": ["string", "null"], "format": "date-time" }
+    }
+  },
+  "operations": {
+    "propose": { "scope": "consensus.propose", "min_role": "proposer" },
+    "score": {
+      "scope": "consensus.score",
+      "min_role": "system",
+      "notes": "Must attach score_evidence. AI observation may appear as one evidence item. Parties remain human."
+    },
+    "acknowledge": {
+      "scope": "consensus.ack",
+      "min_role": "participant",
+      "notes": "Each human party must ack. AI cannot ack. Partial ack stays awaiting_ack."
+    },
+    "reject": {
+      "scope": "consensus.reject",
+      "min_role": "participant",
+      "notes": "Party voids the current sentence with a required reason. Only awaiting_ack / consensus_passed. Does not steal the floor."
+    },
+    "withdraw": {
+      "scope": "consensus.withdraw",
+      "min_role": "participant",
+      "notes": "Only the proposer may withdraw. Only awaiting_ack / consensus_passed. Does not steal the floor."
+    },
+    "expire": {
+      "scope": "consensus.expire",
+      "min_role": "system",
+      "notes": "Timeout void. Verified proposals cannot be expired. Lazy trigger; not a standing timer."
+    },
+    "get_status": { "scope": "consensus.read", "min_role": "observer" }
+  },
+  "invariants": [
+    "score without score_evidence is invalid; cannot leave proposed",
+    "score < threshold → below_threshold; can_complete = false",
+    "score >= threshold → consensus_passed, then awaiting_ack; still can_complete = false",
+    "all human parties acked → consensus_verified; only then can_complete = true",
+    "expired or failed never promote to verified",
+    "rejected or withdrawn never promote to verified; floor stays with the proposer",
+    "Ask result with matches/candidates must include consensus_status; UI must not treat list-as-success",
+    "AI evidence is auxiliary; AI never replaces a party ack"
+  ],
+  "can_complete_mission": {
+    "true_only_when": "status == consensus_verified",
+    "false_otherwise": true
+  }
+}

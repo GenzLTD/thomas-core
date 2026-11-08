@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Ask Envelope v1",
+  "version": "1.6.0",
+  "description": "Single entry for 格契. Internals are replaceable; this envelope is not. dispatch binds to port interfaces in registry.v1, never to a named vendor service. Tatha is one implementation of this envelope.",
+  "entry": "POST /v1/ask",
+  "health": "GET /health",
+  "auth": {
+    "verifier": "ethos",
+    "uid_claim": "sub",
+    "deny_by_default": true,
+    "missing_sub": 401,
+    "accepted_verifiers": [
+      {
+        "id": "ethos",
+        "status": "current",
+        "claims": ["sub", "roles", "tier"],
+        "notes": "八角梯与配额。本版不把 role 改成 roles[]，也不把 ethos 收成唯一强制形状。"
+      },
+      {
+        "id": "zervi-auth",
+        "status": "interim",
+        "claims": ["sub", "role", "name", "phone"],
+        "role": "市场角色（candidate / recruiter / admin），不是八角梯",
+        "notes": "过渡校验者。认终端现用 JWT。ethos 与八角梯留待后一版再换。"
+      }
+    ],
+    "http": { "unauthenticated": 401, "forbidden": 403, "quota_exceeded": 429 }
+  },
+  "slots": ["llm", "tools", "session", "policy", "store"],
+  "default_ports": ["circle", "identity", "memory", "consensus", "contribution"],
+  "deprecated_aliases": {
+    "intent": "port"
+  },
+  "request": {
+    "type": "object",
+    "required": ["message"],
+    "additionalProperties": false,
+    "properties": {
+      "message": {
+        "type": "string",
+        "minLength": 1,
+        "description": "What the member wants. Caller does not pick a backend path."
+      },
+      "context": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "session_id": { "type": "string" },
+          "circle_id": { "type": "string", "description": "围坐 / 共同体标识，须能在 circle 端口解析" },
+          "dialog_mode": {
+            "type": "string",
+            "enum": ["collaboration", "coach"],
+            "description": "双轨对话：协作 × 教练"
+          },
+          "port_hint": {
+            "type": "string",
+            "enum": [
+              "circle",
+              "identity",
+              "memory",
+              "consensus",
+              "contribution",
+              "unknown"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "type": "object",
+    "required": ["port", "status", "result"],
+    "properties": {
+      "port": {
+        "type": "string",
+        "description": "Resolved first-class port or unknown. Not a JobFirst intent name."
+      },
+      "status": {
+        "type": "string",
+        "enum": ["ok", "pending", "partial", "denied", "error", "unknown"],
+        "description": "partial = some sub-operations succeeded. Succeeded steps are not rolled back; failed steps may retry."
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "receipts": {
+            "type": "array",
+            "description": "Per-port status when more than one port ran",
+            "items": {
+              "type": "object",
+              "required": ["port", "status"],
+              "properties": {
+                "port": { "type": "string" },
+                "status": {
+                  "enum": ["ok", "pending", "denied", "error"]
+                },
+                "id": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "suggestions": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+    }
+  },
+  "compensation": {
+    "succeeded_sub_ops": "not rolled back",
+    "failed_sub_ops": "retryable",
+    "example": "memory wrote, consensus failed → status=partial; do not undo memory"
+  },
+  "parse_then_dispatch": {
+    "parse": "message + context → { port, confidence, slots, dialog_mode }",
+    "dispatch": "port → tools registry adapter; adapter talks to store/policy via slots",
+    "invariant": "Adding a capability = register adapter + mode list. Do not grow a JobFirst intent table as the spine."
+  }
+}

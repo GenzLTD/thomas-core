@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC value_axis_choice signal payload v1",
+  "version": "1.1.0",
+  "description": "PlanetX narrative choice. The only writer of identity.value_axes. User-action origin only. Axis comes from the choice itself, not from the domain default. Job-match scores are not this signal.",
+  "source": "planetx",
+  "route": "identity",
+  "type": "object",
+  "required": ["axis", "imprint_name", "domain", "points", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "axis": {
+      "type": "string",
+      "enum": ["survival", "freedom", "belonging"],
+      "description": "survival=钱多, freedom=事少, belonging=离家近. The option's imprint_axis, never the domain's primary axis."
+    },
+    "imprint_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Hand-written imprint name, such as 务实 / 尊严 / 审慎."
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["职业域", "身份域", "诗域", "信任域", "自我域", "迷雾域"],
+      "description": "Navigator six domains. Not the ask-chip list (学习域/生活域/社交域/健康域/创意域)."
+    },
+    "points": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Points added to the named axis. GDD band is 1–5."
+    },
+    "source": {
+      "type": "string",
+      "const": "planetx"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

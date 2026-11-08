@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Signal Envelope v1",
+  "version": "1.1.0",
+  "description": "Machine-to-machine signal entry. Sibling of ask.envelope.v1 (human dialogue). Signals are user-action-generated facts, never AI self-attestation. Does not go through POST /v1/ask, llm slot, or ethos quota.",
+  "entry": "POST /v1/signal-ingest",
+  "auth": {
+    "verifier": "hmac_raw_body",
+    "header": "X-Signature",
+    "algorithm": "HMAC-SHA256",
+    "encoding": "hex_lowercase",
+    "secret_env": "SIGNAL_INGEST_SECRET",
+    "unauthenticated": 401,
+    "dev_noauth": "secret unset → WARNING + accept (local only)"
+  },
+  "request": {
+    "type": "object",
+    "required": ["signal_type", "user_id_hash", "nonce", "payload"],
+    "additionalProperties": false,
+    "properties": {
+      "signal_type": {
+        "type": "string",
+        "enum": ["consensus_match", "personality_beacon", "value_axis_choice"]
+      },
+      "user_id_hash": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$",
+        "description": "sha256(email.lower().trim()); hash only, never plaintext email"
+      },
+      "nonce": {
+        "type": "string",
+        "minLength": 8,
+        "description": "client-generated unique value, uuid4 hex; idempotency key component"
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Optional ISO 8601 UTC; audit only, not part of idempotency"
+      },
+      "payload": {
+        "type": "object",
+        "description": "Strict object. Shape selected by signal_type via payload_by_type."
+      }
+    }
+  },
+  "payload_by_type": {
+    "consensus_match": { "$ref": "signals/consensus_match.v1.json" },
+    "personality_beacon": { "$ref": "signals/personality_beacon.v1.json" },
+    "value_axis_choice": { "$ref": "signals/value_axis_choice.v1.json" }
+  },
+  "route": {
+    "consensus_match": "consensus",
+    "personality_beacon": "identity",
+    "value_axis_choice": "identity"
+  },
+  "idempotency": {
+    "unique_key": ["signal_type", "user_id_hash", "nonce"],
+    "stored": "200 {status: stored, signal_id, port}",
+    "duplicate": "200 {status: duplicate, signal_id}"
+  },
+  "errors": {
+    "401": "invalid_signature",
+    "422": "invalid_envelope | unsupported_signal | user_id_mismatch"
+  },
+  "red_lines": [
+    "payload carries hash and typed results only; no plaintext email, raw answers, or peer identity",
+    "signal must originate from a real user action (confirm match, finish assessment, choose a narrative option); never AI self-attestation",
+    "value_axis_choice carries the option axis and 1–5 points; it must not carry salary_match, location_match, culture_workload_match, or overall",
+    "SIGNAL_INGEST_SECRET is not ETHOS_AUTH_SECRET"
+  ]
+}

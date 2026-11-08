@@ -31,6 +31,7 @@ on:
     paths:
       - 'backend/**'
       - 'scripts/**'
+      - 'contracts/**'
       - '.github/workflows/deploy-106.yml'
   workflow_dispatch:
     inputs:
@@ -52,6 +53,8 @@ jobs:
           python-version: '3.12'   # 基线 3.12（2026-11-07 从 3.10 升级：3.10 已 EOL；钉版四包曾卡 >=3.10 零余量；3.12.13/3.13.14 实测 smoke 9/9）
       - name: 安装钉版依赖
         run: pip install -r backend/requirements-core.pinned.txt
+      - name: 钉版校验
+        run: cd backend && python -m pytest tests
       - name: smoke 门禁（临时 SQLite / 不联网 / 零业务风险）
         run: cd backend && python ../scripts/smoke_core.py
 

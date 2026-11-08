@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Contribution Port v1 (CoCo)",
+  "version": "1.6.0",
+  "port": "contribution",
+  "description": "CoCo loop: attest → fulfill → appeal. Recognition is the narrative; points/tokens are not. v1 does not require a chain. Fulfillment may mint identity.capability_trace after appeal window.",
+  "not": [
+    "a points leaderboard as the product",
+    "an NFT drop",
+    "on-chain settlement as a v1 must-have"
+  ],
+  "on_chain": {
+    "v1": "not required",
+    "narrative": "v1 的格契不依赖链；链是未来可选的一层，不是现在的承诺。"
+  },
+  "status_enum": [
+    "attested",
+    "fulfilled",
+    "appealed",
+    "overturned",
+    "withdrawn"
+  ],
+  "record": {
+    "type": "object",
+    "required": ["circle_id", "subject_sub", "claim", "status"],
+    "properties": {
+      "id": { "type": "string" },
+      "circle_id": { "type": "string" },
+      "subject_sub": { "type": "string", "description": "Whose contribution" },
+      "attestor_sub": { "type": "string" },
+      "claim": { "type": "string" },
+      "action_id": { "type": ["string", "null"], "description": "Optional Dual memory.action id" },
+      "status": {
+        "enum": ["attested", "fulfilled", "appealed", "overturned", "withdrawn"]
+      },
+      "fulfilled_at": { "type": ["string", "null"], "format": "date-time" },
+      "appeal": {
+        "type": ["object", "null"],
+        "properties": {
+          "by_sub": { "type": "string" },
+          "reason": { "type": "string" },
+          "opened_at": { "type": "string", "format": "date-time" },
+          "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+          "resolution": { "type": ["string", "null"], "enum": ["upheld", "overturned", null] }
+        }
+      }
+    }
+  },
+  "operations": {
+    "attest": {
+      "scope": "contribution.attest",
+      "min_role": "participant",
+      "notes": "Cannot attest solely for oneself as the only evidence."
+    },
+    "fulfill": {
+      "scope": "contribution.fulfill",
+      "min_role": "steward",
+      "notes": "Marks attested claim as fulfilled; may append identity.capability_trace with source_port=contribution and weight=evidence after appeal is not open."
+    },
+    "appeal": {
+      "scope": "contribution.appeal",
+      "min_role": "participant"
+    },
+    "resolve_appeal": {
+      "scope": "contribution.appeal.resolve",
+      "min_role": "organizer"
+    }
+  },
+  "invariants": [
+    "Points/tokens if present are derived views, never the source of truth",
+    "Appeal exists before any reputation write-back is final",
+    "Fulfillment may feed identity.append_trace; identity must not mint its own trace",
+    "Governance rights cannot be bought"
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GFCC Port Registry v1",
+  "version": "1.6.0",
+  "description": "Kernel dispatch depends on these interfaces only. Named services below the default line are optional adapters, unloadable via mode. gfcc is the contract layer; Tatha is one implementation of POST /v1/ask.",
+  "kernel": {
+    "entry": "POST /v1/ask",
+    "verifier": "ethos",
+    "accepted_verifiers": ["ethos", "zervi-auth"],
+    "slots": ["llm", "tools", "session", "policy", "store"],
+    "implementation_example": "tatha"
+  },
+  "default_mode": "gfcc.default",
+  "modes": {
+    "gfcc.default": {
+      "required_ports": ["circle", "identity", "memory", "consensus", "contribution"],
+      "notes": "五个端口仍可 stub。本模式不因 1.3.0 改变。"
+    },
+    "gfcc.terminal": {
+      "required_ports": ["identity", "memory"],
+      "auth": "zervi-auth",
+      "notes": "circle、consensus、contribution 不在本模式必选。memory.recall 最低角色仍是 observer；memory.remember 仍要 participant。"
+    }
+  },
+  "federation_contracts": {
+    "invitation": "invitation.v1.json"
+  },
+  "ports": {
+    "circle": {
+      "contract": "circle.v1.json",
+      "default_adapter": "stub",
+      "required_in_default_mode": true
+    },
+    "identity": {
+      "contract": "identity.v1.json",
+      "default_adapter": "stub",
+      "required_in_default_mode": true
+    },
+    "memory": {
+      "contract": "memory.v1.json",
+      "default_adapter": "stub",
+      "required_in_default_mode": true,
+      "store_adapters": {
+        "default": "stub",
+        "optional": ["sqlite", "mem0", "zep", "agentmemory_iii", "cortex-mcp", "gfcc"],
+        "link": "actor_sub",
+        "notes": "cortex-mcp 是终端侧适配器。gfcc 是 pgvector 上的库名。两者只通过 actor_sub 关联。empty_on_boot 仍为真。"
+      }
+    },
+    "consensus": {
+      "contract": "consensus.v1.json",
+      "default_adapter": "stub",
+      "required_in_default_mode": true
+    },
+    "contribution": {
+      "contract": "contribution.v1.json",
+      "default_adapter": "stub",
+      "required_in_default_mode": true
+    }
+  },
+  "optional_adapters": {
+    "knowledge.demopeter": {
+      "mode": "profile.demo",
+      "notes": "RAG sample. Not a 格契 first-class port. Insight/observe is memory.observe, not this adapter."
+    },
+    "memory.agentmemory_iii": {
+      "mode": "profile.demo",
+      "notes": "Third-party memory engine behind ctx.store. Unloadable."
+    },
+    "job_match": {
+      "mode": "profile.demo",
+      "may_feed": "identity.capability_trace",
+      "must_read": "identity.value_axes",
+      "must_not_write": ["identity.value_axes", "identity.values"],
+      "weight": "auxiliary",
+      "scorecard": "job_match.v1.json",
+      "notes": "When value_axes is present, read survival as 钱多/salary_match, freedom as 事少/culture_workload_match, belonging as 离家近/location_match. Score bounds live in job_match.v1.json. The other six sub-scores and overall stay job-scoped. Model scores must not be written back onto the axes."
+    },
+    "poetry": { "mode": "profile.demo" },
+    "credit": { "mode": "profile.demo", "notes": "Must not be a consensus surface." },
+    "mbti": {
+      "mode": "profile.demo",
+      "may_feed": "identity.values",
+      "weight": "auxiliary"
+    }
+  },
+  "forbidden_in_default_tools": [
+    "demopeter",
+    "agentmemory",
+    "iii",
+    "job_match",
+    "poetry",
+    "credit",
+    "mbti"
+  ]
+}
