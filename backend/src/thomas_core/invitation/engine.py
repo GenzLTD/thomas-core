@@ -11,6 +11,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from .pop import PopError, verify_redeem_pop
 from .verifier import current_verifier
 
 TERMINAL_TENANT = "genzer.terminal"
@@ -388,7 +389,28 @@ def _device_verification(db, conn, row: dict, redeemer_sub: str, body: dict, now
     ):
         raise InvitationError(409, "credential_unregistered", "credential is not registered")
     verifier = current_verifier()
-    if credential["verifier_ref"] != verifier.name or not verifier.verify(
+    if credential["verifier_ref"] != verifier.name:
+        raise InvitationError(409, "device_proof_rejected", "device proof was rejected")
+    if verifier.name == "hmac":
+        raw = body.get("device_proof")
+        pop = raw.get("pop") if isinstance(raw, dict) else None
+        try:
+            verify_redeem_pop(
+                db, conn,
+                invitation_id=row["id"],
+                audience=row["audience"],
+                purpose=row["purpose"],
+                credential_id=credential_id,
+                challenge_id=challenge_id,
+                nonce=challenge["nonce"],
+                idem=_idempotency_key(body),
+                pop=pop,
+                mac=proof,
+                now=now,
+            )
+        except PopError as exc:
+            raise InvitationError(exc.status, exc.code, exc.message) from None
+    elif not verifier.verify(
         nonce=challenge["nonce"],
         challenge_id=challenge_id,
         credential_id=credential_id,

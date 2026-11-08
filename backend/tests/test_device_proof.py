@@ -1,9 +1,13 @@
-"""P2 设备证明信封。默认验证器关闭。stub 只在测试里打开。"""
+"""设备证明信封。默认验证器关闭。stub 与 hmac 只在测试里打开。"""
 from __future__ import annotations
 
+import base64
 import os
+import secrets
 import sqlite3
+import time
 
+from src.thomas_core.invitation.pop import build_redeem_pop
 from src.thomas_core.invitation.verifier import stub_proof
 from test_invitation import boot, issue, redeem, register
 
@@ -154,3 +158,130 @@ def test_stub_verifier_accepts_one_challenge_then_closes_it(tmp_path):
         assert (count, status) == (1, "active")
     finally:
         os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
+
+
+def test_hmac_binds_arguments_and_rejects_replay(tmp_path):
+    os.environ["THOMAS_DEVICE_VERIFIER"] = "hmac"
+    os.environ["THOMAS_DEVICE_HMAC_KEY"] = "h" * 32
+    try:
+        app, db_path = boot(tmp_path)
+        os.environ["THOMAS_DEVICE_VERIFIER"] = "hmac"
+        os.environ["THOMAS_DEVICE_HMAC_KEY"] = "h" * 32
+        client = app.test_client()
+        headers, _user_id = register(client, "hmac@example.com")
+        _policy(db_path)
+        created = _issue(client, headers, "hmac-issue", max_redemptions=2)
+        invitation_id = created.get_json()["invitation"]["id"]
+        enrolled = client.post("/v1/device-credentials", headers=headers, json={
+            "credential_id": "ring-hmac",
+            "audience": AUDIENCE,
+        })
+        assert enrolled.status_code == 201
+        assert enrolled.get_json()["verifier_ref"] == "hmac"
+        prepared = client.post(f"/v1/invitations/{invitation_id}/prepare-redemption", headers=headers)
+        challenge = prepared.get_json()["challenge"]
+        jti = base64.urlsafe_b64encode(secrets.token_bytes(16)).rstrip(b"=").decode("ascii")
+        pop, mac = build_redeem_pop(
+            b"h" * 32,
+            invitation_id=invitation_id,
+            audience=AUDIENCE,
+            purpose=PURPOSE,
+            credential_id="ring-hmac",
+            challenge_id=challenge["challenge_id"],
+            nonce=challenge["nonce"],
+            idem="hmac-ok",
+            jti=jti,
+            cnt=1,
+            iat=int(time.time()),
+        )
+        tampered = redeem(
+            client, headers, invitation_id, "hmac-tamper",
+            audience=AUDIENCE, purpose=PURPOSE,
+            device_proof={
+                "challenge_id": challenge["challenge_id"],
+                "credential_id": "ring-hmac",
+                "proof": mac,
+                "pop": pop,
+            },
+        )
+        assert tampered.status_code == 422
+        assert tampered.get_json()["error"] == "device_args_rejected"
+        accepted = redeem(
+            client, headers, invitation_id, "hmac-ok",
+            audience=AUDIENCE, purpose=PURPOSE,
+            device_proof={
+                "challenge_id": challenge["challenge_id"],
+                "credential_id": "ring-hmac",
+                "proof": mac,
+                "pop": pop,
+            },
+        )
+        assert accepted.status_code == 200
+        assert accepted.get_json()["redemption"]["device_verification"]["verified"] is True
+
+        again = _issue(client, headers, "hmac-again", max_redemptions=2)
+        again_id = again.get_json()["invitation"]["id"]
+        prepared_again = client.post(f"/v1/invitations/{again_id}/prepare-redemption", headers=headers)
+        challenge_again = prepared_again.get_json()["challenge"]
+        replay_pop, replay_mac = build_redeem_pop(
+            b"h" * 32,
+            invitation_id=again_id,
+            audience=AUDIENCE,
+            purpose=PURPOSE,
+            credential_id="ring-hmac",
+            challenge_id=challenge_again["challenge_id"],
+            nonce=challenge_again["nonce"],
+            idem="hmac-replay",
+            jti=jti,
+            cnt=2,
+            iat=int(time.time()),
+        )
+        replayed = redeem(
+            client, headers, again_id, "hmac-replay",
+            audience=AUDIENCE, purpose=PURPOSE,
+            device_proof={
+                "challenge_id": challenge_again["challenge_id"],
+                "credential_id": "ring-hmac",
+                "proof": replay_mac,
+                "pop": replay_pop,
+            },
+        )
+        assert replayed.status_code == 409
+        assert replayed.get_json()["error"] == "device_proof_replayed"
+
+        fresh_jti = base64.urlsafe_b64encode(secrets.token_bytes(16)).rstrip(b"=").decode("ascii")
+        rolled_pop, rolled_mac = build_redeem_pop(
+            b"h" * 32,
+            invitation_id=again_id,
+            audience=AUDIENCE,
+            purpose=PURPOSE,
+            credential_id="ring-hmac",
+            challenge_id=challenge_again["challenge_id"],
+            nonce=challenge_again["nonce"],
+            idem="hmac-rollback",
+            jti=fresh_jti,
+            cnt=1,
+            iat=int(time.time()),
+        )
+        rolled = redeem(
+            client, headers, again_id, "hmac-rollback",
+            audience=AUDIENCE, purpose=PURPOSE,
+            device_proof={
+                "challenge_id": challenge_again["challenge_id"],
+                "credential_id": "ring-hmac",
+                "proof": rolled_mac,
+                "pop": rolled_pop,
+            },
+        )
+        assert rolled.status_code == 409
+        assert rolled.get_json()["error"] == "device_counter_rollback"
+        conn = sqlite3.connect(db_path)
+        count = conn.execute(
+            "SELECT redemption_count FROM invitations WHERE id = ?",
+            (again_id,),
+        ).fetchone()[0]
+        conn.close()
+        assert count == 0
+    finally:
+        os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
+        os.environ.pop("THOMAS_DEVICE_HMAC_KEY", None)

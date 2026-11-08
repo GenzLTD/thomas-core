@@ -24,6 +24,7 @@ def boot(tmp_path, *, secret: str = "", strict: str = "0"):
     os.environ["PROFILE_EMBED"] = "deterministic"
     os.environ["ETHOS_AUTH_SECRET"] = secret
     os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
+    os.environ.pop("THOMAS_DEVICE_HMAC_KEY", None)
     for key in _EMAIL_ENV:
         os.environ.pop(key, None)
     from src.thomas_core.compliance.audit import reset_audit_logger
@@ -63,7 +64,7 @@ def redeem(client, headers, invitation_id: str, key: str, **extra):
     return client.post(f"/v1/invitations/{invitation_id}/redeem", headers=headers, json=body)
 
 
-def test_cold_start_creates_seed_and_fourteen_tables(tmp_path):
+def test_cold_start_creates_seed_and_sixteen_tables(tmp_path):
     app, db_path = boot(tmp_path)
     assert app.test_client().get("/health").status_code == 200
     conn = sqlite3.connect(db_path)
@@ -82,6 +83,7 @@ def test_cold_start_creates_seed_and_fourteen_tables(tmp_path):
         "profile_events", "schema_meta",
         "invitations", "invitation_redemptions", "tenant_audience_policies",
         "device_challenges", "device_credentials",
+        "device_counter", "pop_replay",
     }
     assert seed == (1, "not_required")
 
@@ -110,6 +112,7 @@ def test_existing_db_strict_boot_rebuilds_invitation_tables(tmp_path):
     assert {
         "invitations", "invitation_redemptions", "tenant_audience_policies",
         "device_challenges", "device_credentials",
+        "device_counter", "pop_replay",
     } <= names
     assert version != "stale"
     again = ensure_scope(str(db_path), "core", strict=True)

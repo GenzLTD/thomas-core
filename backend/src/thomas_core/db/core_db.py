@@ -564,6 +564,39 @@ class CoreDB:
         )
         return cursor.rowcount == 1
 
+    def pop_jti_seen(self, conn, jti: str) -> bool:
+        row = conn.execute("SELECT 1 FROM pop_replay WHERE jti = ?", (jti,)).fetchone()
+        return row is not None
+
+    def insert_pop_replay(self, conn, row: dict) -> None:
+        conn.execute(
+            """INSERT INTO pop_replay (jti, credential_id, expire_at)
+               VALUES (?, ?, ?)""",
+            (row["jti"], row["credential_id"], row["expire_at"]),
+        )
+
+    def bump_device_counter(self, conn, credential_id: str, cnt: int) -> bool:
+        row = conn.execute(
+            "SELECT last_cnt FROM device_counter WHERE credential_id = ?",
+            (credential_id,),
+        ).fetchone()
+        last = int(row["last_cnt"]) if row else 0
+        if cnt <= last:
+            return False
+        if row:
+            conn.execute(
+                """UPDATE device_counter
+                   SET last_cnt = ?, updated_at = datetime('now')
+                   WHERE credential_id = ?""",
+                (cnt, credential_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO device_counter (credential_id, last_cnt) VALUES (?, ?)",
+                (credential_id, cnt),
+            )
+        return True
+
     def update_invitation_state(self, conn, invitation_id: str, *, status: str, redemption_count: int) -> None:
         conn.execute(
             """UPDATE invitations

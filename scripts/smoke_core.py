@@ -7,7 +7,7 @@
   1. `src.app` 不可导入（证明已脱离宿主）
   2. `create_core_app()` 可装配，/health = 200 且 service=thomas-core
   3. register 201 / login 200 / consent 200
-  4. 表集合为 core 7 表 + profile_events + schema_meta + invitation 三表 + 设备两表
+  4. 表集合为 core 7 表 + profile_events + schema_meta + invitation 三表 + 设备四表
   5. `/v1/ask` 在未注册 brain 时 500 且日志含 BrainNotConfigured（非静默空答案）
   6. 邀请 issue → inspect → prepare → redeem，重复兑换不增加次数
 """
@@ -118,6 +118,7 @@ _EXPECTED_TABLES = {
     "profile_events", "schema_meta",
     "invitations", "invitation_redemptions", "tenant_audience_policies",
     "device_challenges", "device_credentials",
+    "device_counter", "pop_replay",
 }
 
 
@@ -222,12 +223,14 @@ def _check_invitation(c, headers) -> None:
           f"naked={naked.status_code} denied={denied.status_code}")
 
     _check_device_proof(c, headers)
+    _check_hmac_pop(c, headers)
 
     conn = sqlite3.connect(_DB)
     chunks = []
     for table in (
         "invitations", "invitation_redemptions", "tenant_audience_policies",
         "device_challenges", "device_credentials",
+        "device_counter", "pop_replay",
     ):
         for row in conn.execute(f"SELECT * FROM {table}"):
             chunks.append(" ".join("" if value is None else str(value) for value in row))
@@ -354,6 +357,107 @@ def _check_device_proof(c, headers) -> None:
         os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
 
 
+def _check_hmac_pop(c, headers) -> None:
+    """改参数、重放同一 jti、计数器回退，三条都要失败。密钥只活在这个进程里。"""
+    import base64
+    import secrets
+    import time
+
+    from src.thomas_core.invitation.pop import build_redeem_pop
+
+    os.environ["THOMAS_DEVICE_VERIFIER"] = "hmac"
+    os.environ["THOMAS_DEVICE_HMAC_KEY"] = secrets.token_hex(32)
+    try:
+        conn = sqlite3.connect(_DB)
+        conn.execute(
+            """INSERT OR IGNORE INTO tenant_audience_policies
+               (tenant, audience, purpose, issue_allowed, device_policy)
+               VALUES ('genzer.terminal', 'genzer.terminal.registration', 'device_proof',
+                       1, 'registered_credential_required')"""
+        )
+        conn.commit()
+        conn.close()
+        issued = c.post("/v1/invitations", headers=headers, json={
+            "idempotency_key": "smoke-hmac-issue",
+            "tenant": "genzer.terminal",
+            "audience": "genzer.terminal.registration",
+            "purpose": "device_proof",
+            "max_redemptions": 2,
+        })
+        invitation_id = ((issued.get_json() or {}).get("invitation") or {}).get("id")
+        enrolled = c.post("/v1/device-credentials", headers=headers, json={
+            "credential_id": "smoke-ring-hmac",
+            "audience": "genzer.terminal.registration",
+        })
+        prepared = c.post(
+            f"/v1/invitations/{invitation_id}/prepare-redemption", headers=headers, json={},
+        )
+        challenge = (prepared.get_json() or {}).get("challenge") or {}
+        jti = base64.urlsafe_b64encode(secrets.token_bytes(16)).rstrip(b"=").decode("ascii")
+        key = os.environ["THOMAS_DEVICE_HMAC_KEY"].encode("utf-8")
+        pop, mac = build_redeem_pop(
+            key,
+            invitation_id=invitation_id,
+            audience="genzer.terminal.registration",
+            purpose="device_proof",
+            credential_id="smoke-ring-hmac",
+            challenge_id=challenge.get("challenge_id") or "",
+            nonce=challenge.get("nonce") or "",
+            idem="smoke-hmac-ok",
+            jti=jti,
+            cnt=1,
+            iat=int(time.time()),
+        )
+        proof = {
+            "challenge_id": challenge.get("challenge_id"),
+            "credential_id": "smoke-ring-hmac",
+            "proof": mac,
+            "pop": pop,
+        }
+        tampered = c.post(
+            f"/v1/invitations/{invitation_id}/redeem",
+            headers=headers,
+            json={
+                "idempotency_key": "smoke-hmac-tamper",
+                "audience": "genzer.terminal.registration",
+                "purpose": "device_proof",
+                "device_proof": proof,
+            },
+        )
+        accepted = c.post(
+            f"/v1/invitations/{invitation_id}/redeem",
+            headers=headers,
+            json={
+                "idempotency_key": "smoke-hmac-ok",
+                "audience": "genzer.terminal.registration",
+                "purpose": "device_proof",
+                "device_proof": proof,
+            },
+        )
+        replayed = c.post(
+            f"/v1/invitations/{invitation_id}/redeem",
+            headers=headers,
+            json={
+                "idempotency_key": "smoke-hmac-replay",
+                "audience": "genzer.terminal.registration",
+                "purpose": "device_proof",
+                "device_proof": proof,
+            },
+        )
+        check("HMAC 认账：改参数拒绝，原文通过，重放拒绝",
+              enrolled.status_code == 201
+              and tampered.status_code == 422
+              and accepted.status_code == 200
+              and ((accepted.get_json() or {}).get("redemption") or {})
+              .get("device_verification", {}).get("verified") is True
+              and replayed.status_code == 409,
+              f"enroll={enrolled.status_code} tamper={tampered.status_code} "
+              f"redeem={accepted.status_code} replay={replayed.status_code}")
+    finally:
+        os.environ.pop("THOMAS_DEVICE_VERIFIER", None)
+        os.environ.pop("THOMAS_DEVICE_HMAC_KEY", None)
+
+
 def main() -> int:
     print("thomas-core 独立仓自检")
     print(f"  backend={BACKEND}")
@@ -409,7 +513,7 @@ def main() -> int:
     )}
     scopes = [row[0] for row in conn.execute("select distinct scope from schema_meta")]
     conn.close()
-    check("14 表集合 + schema_meta 有 core/profile",
+    check("16 表集合 + schema_meta 有 core/profile",
           names == _EXPECTED_TABLES and "core" in scopes and "profile" in scopes,
           f"extra={sorted(names - _EXPECTED_TABLES)} missing={sorted(_EXPECTED_TABLES - names)} scopes={scopes}")
 

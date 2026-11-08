@@ -1,7 +1,8 @@
 """设备证明插槽。
 
-默认关闭：任何证明都不通过。测试可把 THOMAS_DEVICE_VERIFIER 设为 stub。
-stub 只核对一次性挑战的摘要，不代表戒指或穿戴已经具备硬件证明。
+默认关闭：任何证明都不通过。
+stub 只核对一次性挑战的摘要。hmac 才进入认账：参数哈希、重放和计数器。
+两者都不是证书，也不是硅根。
 """
 from __future__ import annotations
 
@@ -37,8 +38,17 @@ def stub_proof(nonce: str, credential_id: str, challenge_id: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+class HmacVerifier:
+    name = "hmac"
+
+    def verify(self, *, nonce: str, challenge_id: str, credential_id: str, proof: str) -> bool:
+        return False
+
+
 def current_verifier() -> DeviceVerifier:
     mode = os.getenv("THOMAS_DEVICE_VERIFIER", "closed").strip().lower()
     if mode == "stub":
         return StubVerifier()
+    if mode == "hmac":
+        return HmacVerifier()
     return ClosedVerifier()

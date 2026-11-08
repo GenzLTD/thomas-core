@@ -193,3 +193,17 @@ CREATE TABLE IF NOT EXISTS device_credentials (
     status         TEXT NOT NULL DEFAULT 'active',
     enrolled_at    TEXT DEFAULT (datetime('now'))
 );
+
+-- 认账最小闭环：计数器回滚即拒绝，jti 在有效期内不能再用。不是设备总表。
+CREATE TABLE IF NOT EXISTS device_counter (
+    credential_id TEXT PRIMARY KEY,
+    last_cnt      INTEGER NOT NULL DEFAULT 0,
+    updated_at    TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pop_replay (
+    jti           TEXT PRIMARY KEY,
+    credential_id TEXT NOT NULL,
+    expire_at     TEXT NOT NULL,
+    seen_at       TEXT DEFAULT (datetime('now'))
+);
