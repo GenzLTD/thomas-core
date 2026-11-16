@@ -13,6 +13,7 @@ WorkingDirectory=/home/ubuntu/thomas/current/backend
 EnvironmentFile=/home/ubuntu/thomas/.env
 EnvironmentFile=/home/ubuntu/thomas/deploy.env
 Environment=THOMAS_SCHEMA_SPLIT=1
+Environment=FLASK_HOST=127.0.0.1
 Environment=FLASK_PORT=5300
 Environment=DATABASE_PATH=/home/ubuntu/thomas/data/core.db
 # 结算写画像时不要在请求线程下载 ONNX。模型预置到缓存后可改为 onnx。
