@@ -84,6 +84,39 @@ def create_core_app(env: str = "development") -> Flask:
         llm_ready = primary_llm == "ollama" or has_deepseek
         from src.thomas_core.profile.chroma_index import chroma_ready
 
+        # RAG 分轨探活（与 looma-zervi tip≥61a99245 宿主/内嵌核同字段；106 V10 / orch smoke 硬门禁）
+        ollama_host = (
+            app.config.get("OLLAMA_HOST")
+            or os.getenv("OLLAMA_HOST")
+            or "http://127.0.0.1:11434"
+        )
+        ollama_ok = False
+        ollama_status = "unreachable"
+        try:
+            import requests as _req
+
+            resp = _req.get(f"{str(ollama_host).rstrip('/')}/api/tags", timeout=2)
+            ollama_status = "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+            ollama_ok = resp.status_code == 200
+        except Exception:
+            ollama_status = "unreachable"
+            ollama_ok = False
+
+        rag_privacy_mode = (
+            app.config.get("RAG_PRIVACY_MODE")
+            or os.getenv("RAG_PRIVACY_MODE")
+            or "dual"
+        )
+        rag_cloud_allowed = [
+            c.strip()
+            for c in str(
+                app.config.get("RAG_CLOUD_ALLOWED_COLLECTIONS")
+                or os.getenv("RAG_CLOUD_ALLOWED_COLLECTIONS")
+                or "poetry_full"
+            ).split(",")
+            if c.strip()
+        ]
+
         return jsonify(
             status="ok" if llm_ready else "degraded",
             service="thomas-core",
@@ -94,6 +127,10 @@ def create_core_app(env: str = "development") -> Flask:
             llm_configured=llm_ready,
             chroma_ok=chroma_ready(app.config["DATABASE_PATH"]),
             bridge_configured=bool((app.config.get("ETHOS_AUTH_SECRET") or "").strip()),
+            ollama_ok=ollama_ok,
+            ollama_status=ollama_status,
+            rag_privacy_mode=str(rag_privacy_mode).strip().lower() or "dual",
+            rag_cloud_allowed_collections=rag_cloud_allowed,
             core_blueprints=["auth", "ask", "compliance"],
         )
 
