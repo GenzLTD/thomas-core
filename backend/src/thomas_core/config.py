@@ -44,6 +44,37 @@ def _resolve_rag_cloud_allowed_collections_csv() -> str:
     return ",".join(c.strip() for c in raw.split(",") if c.strip())
 
 
+def resolve_rag_privacy_mode() -> str:
+    return _resolve_rag_privacy_mode()
+
+
+def resolve_rag_cloud_allowed_collections() -> list[str]:
+    return [c for c in _resolve_rag_cloud_allowed_collections_csv().split(",") if c]
+
+
+def rag_egress_for_collection(
+    collection: str,
+    *,
+    mode: str | None = None,
+    allowed: list[str] | None = None,
+) -> str:
+    """Return ``cloud_ok`` or ``local_only`` for a retrieved corpus collection."""
+    mode_v = (mode or resolve_rag_privacy_mode()).strip().lower()
+    if mode_v == "off":
+        return "cloud_ok"
+    if mode_v == "local_only":
+        return "local_only"
+    allow = (
+        allowed
+        if allowed is not None
+        else resolve_rag_cloud_allowed_collections()
+    )
+    coll = (collection or "").strip()
+    if coll and coll in allow:
+        return "cloud_ok"
+    return "local_only"
+
+
 class CoreConfig:
     """核侧 Flask config（`app.config.from_object(CoreConfig)`）。
 
