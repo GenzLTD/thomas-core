@@ -74,6 +74,33 @@ fi
 
 mkdir -p "$APP/releases" "$APP/data" "$APP/logs" "$APP/bin" "$APP/src"
 
+# health 探针：前置短路与 fetch 后复核共用（只认本单元 + sqlite store）
+health_fields() {
+  curl -sf -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | python3 -c 'import json,sys
+try:
+    data=json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data={}
+print(data.get("service",""))
+print(data.get("store",""))'
+}
+already_healthy() {
+  local rel="$1" running
+  [ "$(readlink -f "$APP/current" 2>/dev/null || true)" = "$(readlink -f "$rel")" ] || return 1
+  [ -f "$rel/services/gfcc_kernel/pyproject.toml" ] || return 1
+  running="$(health_fields || true)"
+  [ "$(printf '%s\n' "$running" | sed -n '1p')" = "gfcc_kernel" ] || return 1
+  [ "$(printf '%s\n' "$running" | sed -n '2p')" = "sqlite" ] || return 1
+}
+
+# --- 0b. 已是当前钉子且健康：先短路，完全不碰网络 ---
+# 教训 2026-11-19：GitHub HTTPS 抖动（HTTP/2 framing / GnuTLS -110）会让本脚本
+# 在 fetch 处 fail-closed，即便目标 release 早已装好并在跑。把幂等判断提到 fetch 前。
+if already_healthy "$APP/releases/$SHA"; then
+  say "already running $SHA (skip fetch)"
+  exit 0
+fi
+
 # --- 1. 公开仓按钉子取源码。deploy key 只属于 thomas-core，这里走 HTTPS ---
 SRC="$APP/src"
 if [ ! -d "$SRC/.git" ]; then
@@ -95,23 +122,10 @@ if [ ! -f "$REL/services/gfcc_kernel/pyproject.toml" ]; then
   git -C "$SRC" archive "$SHA" | tar -x -C "$REL"
 fi
 
-# --- 2. 已是这个钉子且健康：不重启 thomas，也不再装一遍 ---
-health_fields() {
-  curl -sf -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | python3 -c 'import json,sys
-try:
-    data=json.loads(sys.stdin.read() or "{}")
-except Exception:
-    data={}
-print(data.get("service",""))
-print(data.get("store",""))'
-}
-if [ "$(readlink -f "$APP/current" 2>/dev/null || true)" = "$(readlink -f "$REL")" ]; then
-  running="$(health_fields || true)"
-  if [ "$(printf '%s\n' "$running" | sed -n '1p')" = "gfcc_kernel" ] \
-     && [ "$(printf '%s\n' "$running" | sed -n '2p')" = "sqlite" ]; then
-    say "already running $SHA"
-    exit 0
-  fi
+# --- 2. fetch 后复核：解析出的 full sha 若正是当前健康钉子，不重复安装 ---
+if already_healthy "$REL"; then
+  say "already running $SHA (post-fetch check)"
+  exit 0
 fi
 
 # --- 3. 端口必须是我们自己的，或者还没人听 ---
