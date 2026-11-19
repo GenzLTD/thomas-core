@@ -37,30 +37,8 @@ def chat_completion(messages: list, stream: bool = False, temperature: float = 0
 
 
 def rag_answer(question: str, context_chunks: list) -> str:
-    """
-    Generate a RAG answer using retrieved context chunks.
-
-    Args:
-        question: user's question
-        context_chunks: list of text chunks from ChromaDB search
-
-    Returns:
-        Generated answer string
-    """
-    context_text = "\n\n---\n\n".join(context_chunks) if context_chunks else "(no context found)"
-
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a helpful assistant. Answer the user's question based on the "
-                "provided context. If the context doesn't contain relevant information, "
-                "say so honestly. Always cite which context chunk you used.\n\n"
-                f"Context:\n{context_text}"
-            ),
-        },
-        {"role": "user", "content": question},
-    ]
-
-    result = chat_completion(messages)
-    return result["choices"][0]["message"]["content"]
+    """禁用：RAG 生成必须走 call_llm + rag_egress 分轨，禁止无闸门直连 DeepSeek。"""
+    raise RuntimeError(
+        "deepseek_client.rag_answer is disabled; use call_llm with rag egress policy "
+        "(privacy dual-track)."
+    )

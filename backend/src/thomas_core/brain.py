@@ -30,13 +30,21 @@ def reset_brain() -> None:
 
 
 def _default_brain():
+    # 1) 宿主合订仓：优先产品大脑（含诗歌/MBTI 等）
     try:
         from src.agents.central_brain import dispatch, parse_intent
 
         return parse_intent, dispatch
-    except Exception as exc:  # ImportError / 宿主缺失
+    except Exception:
+        pass
+    # 2) 独立核仓：RAG + 出境分轨缺省大脑（解 Ask egress / smoke）
+    try:
+        from src.thomas_core.brain_rag import dispatch, parse_intent
+
+        return parse_intent, dispatch
+    except Exception as exc:  # pragma: no cover
         raise BrainNotConfigured(
-            "brain not configured: 宿主未调用 register_brain()，且缺省 src.agents.central_brain 不可用"
+            "brain not configured: 宿主未 register_brain()，且核侧 brain_rag 不可用"
         ) from exc
 
 
