@@ -8,6 +8,13 @@
 #   核部署成功后另起 gfcc-kernel：只听 127.0.0.1:5211，不切公网，不出境。
 #   失败不回滚 thomas-core。凭据在服务器 ~/gfcc-kernel/.env，不进仓。
 #
+# 部署 SHA 纪律（2026-11-19 修订；教训：UI 缓存旧 sha 导致「测 A / 部署 B」）：
+#   - 部署的 commit 只能来自 job output：test job checkout 的真实 HEAD，
+#     或 sync-gfcc job 钉契约后推进 main 的 HEAD。
+#   - 取消手工 sha 输入：自由文本 + UI 缓存 = 会静默部署未测代码（bfe7b1c5 事故）。
+#   - deploy 前有对拍闸门：deploy_sha 必须等于被测/钉契约 sha，否则 fail-closed。
+#   - 回滚历史版本走独立 revert commit 推 main 触发本工作流，不在部署入口填 sha。
+#
 # 安全口径（FN-2026-11-07-01 退役对账教训，逐条内建）：
 #   1) 钉 SSH 主机密钥指纹（DEPLOY106_HOST_FINGERPRINT），严禁 StrictHostKeyChecking=no
 #      —— 退役 IP 会被云商回收转售，不钉指纹 = 把部署产物和私钥送给下一任住户
@@ -40,9 +47,6 @@ on:
       - '.github/workflows/deploy-106.yml'
   workflow_dispatch:
     inputs:
-      sha:
-        description: '部署指定 commit（留空 = 同步后的 main 或当前提交）'
-        required: false
       gfcc_ref:
         description: '先钉这个 gfcc tag 或 SHA，再部署。留空则只部署本仓'
         required: false
@@ -108,8 +112,17 @@ jobs:
   test:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.gfcc_ref == '')
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+      - name: 记录被测 commit（部署唯一真相源）
+        id: meta
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          echo "被测 commit = $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'   # 基线 3.12（2026-11-07 从 3.10 升级：3.10 已 EOL；钉版四包曾卡 >=3.10 零余量；3.12.13/3.13.14 实测 smoke 9/9）
@@ -131,13 +144,33 @@ jobs:
     environment: production-106   # 可选：Settings→Environments 里配 required reviewers 当人工闸
     steps:
       - uses: actions/checkout@v4
+      - name: 解析并锁定部署 SHA（只认 job output，拒绝手工/触发参数）
+        id: resolve
+        env:
+          TEST_SHA: ${{ needs.test.outputs.sha }}
+          SYNC_SHA: ${{ needs.sync-gfcc.outputs.sha }}
+        run: |
+          set -euo pipefail
+          echo "tested_sha = ${TEST_SHA:-<skipped>}"
+          echo "synced_sha = ${SYNC_SHA:-<skipped>}"
+          deploy_sha="${SYNC_SHA:-$TEST_SHA}"
+          if [ -z "$deploy_sha" ]; then
+            echo "::error::test 与 sync-gfcc 均未提供 sha，拒绝部署（不接受手工/触发参数）"
+            exit 1
+          fi
+          if [ -n "$TEST_SHA" ] && [ -n "$SYNC_SHA" ] && [ "$TEST_SHA" != "$SYNC_SHA" ]; then
+            echo "::error::test_sha($TEST_SHA) != sync_sha($SYNC_SHA)，测的不是要发的，拒绝部署"
+            exit 1
+          fi
+          echo "deploy_sha=$deploy_sha" >> "$GITHUB_OUTPUT"
+          echo "::notice::锁定部署 SHA=$deploy_sha（来源：job output，非手工输入）"
       - name: 触发服务器侧部署（服务器经只读 deploy key 拉码，CI 不传制品）
         env:
           DEPLOY106_HOST: ${{ vars.DEPLOY106_HOST }}
           DEPLOY106_USER: ${{ vars.DEPLOY106_USER }}
           DEPLOY106_SSH_KEY: ${{ secrets.DEPLOY106_SSH_KEY }}
           DEPLOY106_HOST_FINGERPRINT: ${{ secrets.DEPLOY106_HOST_FINGERPRINT }}
-        run: ./scripts/ci-ssh.sh deploy "${{ needs.sync-gfcc.outputs.sha || github.event.inputs.sha || github.sha }}"
+        run: ./scripts/ci-ssh.sh deploy "${{ steps.resolve.outputs.deploy_sha }}"
 
   # 核部署成功之后才装 gfcc-kernel。失败不回滚 thomas-core。
   # 只听 127.0.0.1:5211，不改 nginx，不出境。钉子用刚部署的 SOURCE.json。
