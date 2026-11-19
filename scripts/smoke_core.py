@@ -8,7 +8,8 @@
   2. `create_core_app()` 可装配，/health = 200 且 service=thomas-core
   3. register 201 / login 200 / consent 200
   4. 表集合为 core 7 表 + profile_events + schema_meta + invitation 三表 + 设备四表
-  5. `/v1/ask` 在未注册 brain 时 500 且日志含 BrainNotConfigured（非静默空答案）
+  5. `/v1/ask` 未注册 brain 时回落 brain_rag 并带 egress 分轨标记
+     （dual/空库 → cloud_ok；非静默空答案；不要求本机 ollama）
   6. 邀请 issue → inspect → prepare → redeem，重复兑换不增加次数
 """
 from __future__ import annotations
@@ -467,16 +468,23 @@ def main() -> int:
     check("src.app 不可导入（已脱离宿主）", importlib.util.find_spec("src.app") is None)
 
     from src.thomas_core.app import create_core_app
+    from src.thomas_core.config import CoreConfig
+
+    # dotenv(override=True) 可能抢回本机 .env 的 DATABASE_PATH；再钉回临时库
+    os.environ["DATABASE_PATH"] = str(_DB)
+    os.environ["THOMAS_SCHEMA_SPLIT"] = "1"
+    CoreConfig.refresh()
 
     app = create_core_app()
-    # /v1/ask 未注册 brain 时抛 BrainNotConfigured 是预期行为，压掉堆栈噪音
-    # （ask_routes 用模块级 logger.exception，故按 logger 名统一降级）
+    # 回落 brain_rag 后一般不再抛 BrainNotConfigured；仍压低 LLM/检索噪音（CI 无 ollama）
     app.logger.setLevel(logging.CRITICAL)
     for lname in ("src.thomas_core", "src.thomas_core.brain",
+                  "src.thomas_core.brain_rag", "src.thomas_core.llm",
                   "src.thomas_core.routes.ask_routes", "looma.ask", "looma"):
         logging.getLogger(lname).setLevel(logging.CRITICAL)
-    # 让 Flask 把视图异常转成 500 而非冒泡到 stdout
     app.config["PROPAGATE_EXCEPTIONS"] = False
+    # dual：有无检索命中均可；断言只要求 egress∈{local_only,cloud_ok}
+    app.config["RAG_PRIVACY_MODE"] = "dual"
     c = app.test_client()
 
     r = c.get("/health")
@@ -519,22 +527,34 @@ def main() -> int:
 
     _check_invitation(c, headers)
 
-    # ask 未注册 brain：应失败而非静默空答案
+    # ask 未 register_brain：独立核仓回落 brain_rag，按 egress 分轨（非静默空答案）
+    # Dell 写法 A：只断 status + egress 字段，不要求真实 LLM（CI 无 ollama）
     r_ask = c.post("/v1/ask", json={"query": "介绍一下 THOMAS 架构的底座"}, headers=headers)
-    check("ask 无 brain = 500（非静默空答案）", r_ask.status_code == 500,
-          f"status={r_ask.status_code}")
+    ask_body = r_ask.get_json(silent=True) or {}
+    egress = ask_body.get("egress")
+    check(
+        "ask 无 brain 回落 brain_rag 且带分轨标记（非静默空答案）",
+        r_ask.status_code in (200, 503)
+        and egress in ("local_only", "cloud_ok")
+        and bool(ask_body.get("answer") or ask_body.get("error")),
+        f"status={r_ask.status_code} egress={egress} "
+        f"err={ask_body.get('error')} answer={str(ask_body.get('answer') or '')[:40]!r}",
+    )
 
-    from src.thomas_core.brain import BrainNotConfigured
     from src.thomas_core import hooks
     from src.thomas_core.hooks import reset_hooks
+    from src.thomas_core.brain import get_brain
+
     reset_hooks()
-    try:
-        from src.thomas_core.brain import get_brain
-        get_brain()
-        brain_guarded = False
-    except BrainNotConfigured:
-        brain_guarded = True
-    check("BrainNotConfigured 可捕获", brain_guarded)
+    pair = get_brain()  # bfe7b1c：应回落 brain_rag，不再抛 BrainNotConfigured
+    check(
+        "独立核仓 get_brain 回落可用（非静默空答案）",
+        isinstance(pair, tuple)
+        and len(pair) == 2
+        and callable(pair[0])
+        and callable(pair[1]),
+        f"pair={pair!r}",
+    )
     check("hooks 缺省 no-op / None（宿主缺失不炸）",
           hooks._default_timeline_logger() is None
           and hooks._default_report_manager_factory() is None)
